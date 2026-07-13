@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: tf2-hosting-app
+  labels:
+    app: tf2-hosting-app
+spec:
+  # ClusterIP — internal only this phase (no external exposure; guarded by the
+  # internal/WireGuard network per the constitution's Secure-by-default principle).
+  type: ClusterIP
+  selector:
+    app: tf2-hosting-app
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

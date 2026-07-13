@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}Servers · TF2 Hosting{% endblock %}
+{% block screen %}servers-list{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <h1>Servers</h1>
+  <a class="btn btn-primary" href="{{ url_for('servers.new_server') }}">+ Create server</a>
+</div>
+
+{% if servers %}
+{% if servers | selectattr('demo') | list %}
+<div class="demo-banner">Servers tagged <span class="badge badge-demo">DEMO</span> are placeholder sample data — not real running servers.</div>
+{% endif %}
+<table class="table">
+  <thead>
+    <tr>
+      <th>Name</th><th>Map</th><th>Status</th><th>Players</th><th>Address</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for s in servers %}
+    <tr>
+      <td>
+        <a href="{{ url_for('servers.server_detail', server_id=s.id) }}">{{ s.name }}</a>
+        {% if s.demo %}<span class="badge badge-demo">DEMO</span>{% endif %}
+      </td>
+      <td>{{ s.map }}</td>
+      <td><span class="badge {{ 'badge-on' if s.is_online else 'badge-off' }}">{{ s.status_label }}</span></td>
+      <td>{{ s.slots_display }}</td>
+      <td>{{ s.address or "—" }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<div class="empty-state">
+  <h2>No servers yet</h2>
+  <p>You haven't created any TF2 servers. Create one to get started.</p>
+  <a class="btn btn-primary" href="{{ url_for('servers.new_server') }}">+ Create your first server</a>
+</div>
+{% endif %}
+{% endblock %}

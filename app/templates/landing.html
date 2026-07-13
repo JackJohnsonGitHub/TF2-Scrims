@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}TF2 Server Hosting{% endblock %}
+{% block screen %}landing{% endblock %}
+
+{% block content %}
+<div class="landing">
+  <h1>Dedicated TF2 servers for your season</h1>
+  <p class="lede">
+    Sign in with Steam and request a dedicated Team Fortress 2 server for your team's
+    scrims. Publicly joinable, RCON-managed, yours for the season.
+  </p>
+  <a class="btn btn-primary" href="{{ url_for('auth.login') }}">Sign in with Steam</a>
+  <ul class="feature-list">
+    <li>Publicly joinable server with a shareable address</li>
+    <li>Web admin console — change map, kick players, run commands over RCON</li>
+    <li>Set your hostname, starting map, slots, and join password</li>
+    <li>Request a server; we handle the rest for the season</li>
+  </ul>
+</div>
+{% endblock %}

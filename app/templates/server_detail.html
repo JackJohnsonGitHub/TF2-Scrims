@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block title %}{{ server.name }} · TF2 Hosting{% endblock %}
+{% block screen %}server-detail{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <h1>{{ server.name }}</h1>
+  {% if server.demo %}<span class="badge badge-demo">DEMO</span>{% endif %}
+  <span class="badge {{ 'badge-on' if server.is_online else 'badge-off' }}">{{ server.status_label }}</span>
+</div>
+{% if server.demo %}
+<div class="demo-banner">This is placeholder sample data — not a real running server.</div>
+{% endif %}
+<p class="muted">
+  Map: {{ server.map }} · Players: {{ server.slots_display }} · Address: {{ server.address or "—" }}
+</p>
+
+<div class="two-col">
+  <section class="panel">
+    <h2>Settings</h2>
+    <form class="form" method="post" action="{{ url_for('servers.update_settings', server_id=server.id) }}">
+      <label class="field">
+        <span>Server name</span>
+        <input type="text" name="name" value="{{ server.name }}">
+        {% if errors.get('name') %}<small class="err">{{ errors['name'] }}</small>{% endif %}
+      </label>
+      <label class="field">
+        <span>Map</span>
+        <input type="text" name="map" value="{{ server.map }}">
+        {% if errors.get('map') %}<small class="err">{{ errors['map'] }}</small>{% endif %}
+      </label>
+      <label class="field">
+        <span>Max slots</span>
+        <input type="number" name="max_slots" min="1" max="32" value="{{ server.max_slots }}">
+        {% if errors.get('max_slots') %}<small class="err">{{ errors['max_slots'] }}</small>{% endif %}
+      </label>
+      <label class="field">
+        <span>Join password <em class="muted">(optional)</em></span>
+        <input type="text" name="join_password" value="">
+        {% if errors.get('join_password') %}<small class="err">{{ errors['join_password'] }}</small>{% endif %}
+      </label>
+      <div class="form-actions">
+        <button class="btn btn-primary" type="submit">Save settings</button>
+        <span class="muted">Placeholder — not saved yet.</span>
+      </div>
+    </form>
+  </section>
+
+  <section class="panel">
+    <h2>Admin console</h2>
+    <div class="console" data-console>
+      {% if console_output %}
+        {% for line in console_output %}
+          <div class="console-line console-{{ line.kind }}">
+            {%- if line.kind == 'command' %}&gt; {% endif -%}{{ line.text }}
+          </div>
+        {% endfor %}
+      {% else %}
+        <div class="console-line muted">Enter a command (e.g. <code>status</code>, <code>changelevel</code>) below.</div>
+      {% endif %}
+    </div>
+    <form class="console-form" method="post" action="{{ url_for('console.run_command', server_id=server.id) }}">
+      <input type="text" name="command" placeholder="status" autocomplete="off">
+      <button class="btn btn-primary" type="submit">Run</button>
+    </form>
+    <p class="muted">Placeholder — RCON is not wired up yet.</p>
+  </section>
+</div>
+
+<p><a href="{{ url_for('servers.list_servers') }}">&larr; Back to servers</a></p>
+{% endblock %}

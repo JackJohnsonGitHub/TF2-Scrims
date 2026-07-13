@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Dashboard · TF2 Hosting{% endblock %}
+{% block screen %}dashboard{% endblock %}
+
+{% block content %}
+<h1>Dashboard</h1>
+<p class="lede">Spin up and manage your Team Fortress 2 servers.</p>
+
+<div class="stat-row">
+  <div class="stat">
+    <span class="stat-num">{{ total }}</span>
+    <span class="stat-label">Servers</span>
+  </div>
+  <div class="stat">
+    <span class="stat-num">{{ online }}</span>
+    <span class="stat-label">Online</span>
+  </div>
+</div>
+
+<div class="card-grid">
+  <a class="card" href="{{ url_for('servers.list_servers') }}">
+    <h2>Your servers</h2>
+    <p>View status, open a server, and manage it.</p>
+  </a>
+  <a class="card card-accent" href="{{ url_for('servers.new_server') }}">
+    <h2>+ Create a server</h2>
+    <p>Start a new TF2 server from a template.</p>
+  </a>
+</div>
+
+{% if servers %}
+<h2 class="section-head">Recent servers</h2>
+<ul class="mini-list">
+  {% for s in servers %}
+  <li>
+    <a href="{{ url_for('servers.server_detail', server_id=s.id) }}">{{ s.name }}</a>
+    {% if s.demo %}<span class="badge badge-demo">DEMO</span>{% endif %}
+    <span class="badge {{ 'badge-on' if s.is_online else 'badge-off' }}">{{ s.status_label }}</span>
+    <span class="muted">{{ s.map }} · {{ s.slots_display }}</span>
+  </li>
+  {% endfor %}
+</ul>
+{% endif %}
+{% endblock %}

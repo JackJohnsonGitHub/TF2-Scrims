@@ -1,0 +1,72 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tf2-hosting-app
+  labels:
+    app: tf2-hosting-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: tf2-hosting-app
+  template:
+    metadata:
+      labels:
+        app: tf2-hosting-app
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+      containers:
+        - name: app
+          image: harbor.irulast.com/tf2-hosting/app:dev
+          ports:
+            - name: http
+              containerPort: 8000
+          env:
+            - name: APP_ENV
+              value: "production"
+            - name: APP_BASE_URL
+              # MUST match the app's public HTTPS origin (the OpenID realm). Set to
+              # the real ingress hostname before enabling Steam sign-in.
+              value: "https://REPLACE-ME.irulast.com"
+            - name: DB_PATH
+              value: "/data/app.db"
+            # Secrets come from OpenBao, surfaced as the `tf2-hosting-secrets` Secret
+            # (see secret.example.yaml). Never hardcode these.
+            - name: APP_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: tf2-hosting-secrets
+                  key: app-secret-key
+            - name: STEAM_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: tf2-hosting-secrets
+                  key: steam-api-key
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          # Right-size the blast radius (Principle VII).
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "250m"
+              memory: "128Mi"
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: tf2-hosting-data

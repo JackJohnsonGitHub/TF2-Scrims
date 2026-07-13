@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}Not found · TF2 Hosting{% endblock %}
+{% block screen %}not-found{% endblock %}
+
+{% block content %}
+<div class="empty-state">
+  <h1>404 — Not found</h1>
+  <p>That page or server doesn't exist.</p>
+  <a class="btn btn-primary" href="{{ url_for('dashboard.index') }}">Back to dashboard</a>
+</div>
+{% endblock %}

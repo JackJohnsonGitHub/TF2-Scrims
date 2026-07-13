@@ -1,0 +1,25 @@
+# Keep the build context lean — mirror the iriga approach. The image only needs
+# the app package, wsgi entrypoint, and requirements. Never ship VCS/spec noise,
+# local venvs, or caches into the context.
+.git/
+.gitignore
+.dockerignore
+Dockerfile
+specs/
+docs/
+deploy/
+tests/
+.venv/
+venv/
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+*.db
+*.sqlite
+*.log
+.env*
+.DS_Store
+.idea/
+.vscode/

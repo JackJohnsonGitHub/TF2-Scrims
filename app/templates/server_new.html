@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Create server · TF2 Hosting{% endblock %}
+{% block screen %}server-new{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <h1>Create a server</h1>
+  <a class="btn" href="{{ url_for('servers.list_servers') }}">Cancel</a>
+</div>
+
+<form class="form" method="post" action="{{ url_for('servers.new_server') }}">
+  <label class="field">
+    <span>Server name</span>
+    <input type="text" name="name" value="{{ form.get('name', '') }}" placeholder="Friday Night PUG">
+    {% if errors.get('name') %}<small class="err">{{ errors['name'] }}</small>{% endif %}
+  </label>
+
+  <label class="field">
+    <span>Starting map</span>
+    <input type="text" name="map" value="{{ form.get('map', '') }}" placeholder="cp_process_final">
+    {% if errors.get('map') %}<small class="err">{{ errors['map'] }}</small>{% endif %}
+  </label>
+
+  <label class="field">
+    <span>Max player slots</span>
+    <input type="number" name="max_slots" min="1" max="32" value="{{ form.get('max_slots', '24') }}">
+    {% if errors.get('max_slots') %}<small class="err">{{ errors['max_slots'] }}</small>{% endif %}
+  </label>
+
+  <label class="field">
+    <span>Join password <em class="muted">(optional)</em></span>
+    <input type="text" name="join_password" value="{{ form.get('join_password', '') }}">
+    {% if errors.get('join_password') %}<small class="err">{{ errors['join_password'] }}</small>{% endif %}
+  </label>
+
+  <div class="form-actions">
+    <button class="btn btn-primary" type="submit">Create server</button>
+    <span class="muted">Placeholder — not wired up yet.</span>
+  </div>
+</form>
+{% endblock %}

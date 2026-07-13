@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[co]
+.venv/
+venv/
+.pytest_cache/
+
+# Local data — SQLite user DB lives on a PVC in deploys, never in git
+*.db
+*.sqlite
+
+# Env / editor
+.env*
+*.log
+.DS_Store
+.idea/
+.vscode/

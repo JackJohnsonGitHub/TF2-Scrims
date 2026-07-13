@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}Sign-in failed · TF2 Hosting{% endblock %}
+{% block screen %}login-error{% endblock %}
+
+{% block content %}
+<div class="empty-state">
+  <h1>Sign-in didn't complete</h1>
+  <p>We couldn't verify your Steam sign-in. This can happen if you cancelled at Steam,
+     or if Steam is temporarily unavailable.</p>
+  <a class="btn btn-primary" href="{{ url_for('auth.login') }}">Try signing in again</a>
+  <p><a href="{{ url_for('dashboard.index') }}">Back to home</a></p>
+</div>
+{% endblock %}

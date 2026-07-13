@@ -1,0 +1,50 @@
+"""Flask application factory for the TF2 Server Hosting control plane.
+
+Serves a server-rendered UI shell (feature 001) plus Steam sign-in and identity
+(feature 002). Placeholder server data remains until real servers exist.
+"""
+from flask import Flask, render_template
+
+from .config import Config
+from .db import close_db, init_schema
+from .security import current_user
+
+
+def create_app(config_object: type[Config] = Config) -> Flask:
+    config_object.validate()
+
+    app = Flask(__name__)
+    app.config.from_object(config_object)
+
+    # Initialize the metadata store (idempotent) and close connections per request.
+    init_schema(app)
+    app.teardown_appcontext(close_db)
+
+    # Register blueprints (one per screen area).
+    from .routes.health import bp as health_bp
+    from .routes.dashboard import bp as dashboard_bp
+    from .routes.servers import bp as servers_bp
+    from .routes.console import bp as console_bp
+    from .routes.auth import bp as auth_bp
+
+    app.register_blueprint(health_bp)
+    app.register_blueprint(auth_bp)
+    app.register_blueprint(dashboard_bp)
+    app.register_blueprint(servers_bp)
+    app.register_blueprint(console_bp)
+
+    # Expose the signed-in user to every template (header identity).
+    @app.context_processor
+    def inject_current_user():
+        return {"current_user": current_user()}
+
+    # Friendly 404 for unknown addresses / unknown server ids.
+    @app.errorhandler(404)
+    def not_found(_err):
+        return render_template("404.html"), 404
+
+    return app
+
+
+# Module-level app for `flask --app app run` and Gunicorn (`wsgi:app`).
+app = create_app()
