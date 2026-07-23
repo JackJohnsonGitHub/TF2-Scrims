@@ -6,105 +6,137 @@
 <div class="page-head">
   <h1>Scrims</h1>
   <div>
-    <a class="btn" href="{{ url_for('scrims.listings') }}">Browse open listings</a>
+    <a class="btn" href="{{ url_for('scrims.new_listing_form') }}">＋ New listing</a>
     <a class="btn btn-primary" href="{{ url_for('scrims.new') }}">Propose a scrim</a>
   </div>
 </div>
 
-<section class="card">
-  <h2>Incoming proposals</h2>
-  {% if incoming %}
-  <table class="table">
-    <thead><tr><th>From</th><th>Your team</th><th>Format</th><th>When (UTC)</th><th></th></tr></thead>
-    <tbody>
-      {% for s in incoming %}
-      <tr>
-        <td>{{ s.proposer_name }}</td>
-        <td>{{ s.opponent_name }}</td>
-        <td>{{ format_labels.get(s.format, s.format) }}</td>
-        <td>{{ s.scheduled_at }}</td>
-        <td>
+<div class="scrims-cols">
+  <div class="col">
+    <section class="card">
+      <h2>Open listings</h2>
+      <form method="get" action="{{ url_for('scrims.index') }}" class="filter">
+        <label for="format">Format</label>
+        <select id="format" name="format" onchange="this.form.submit()">
+          <option value="">All formats</option>
+          {% for fmt, label in format_labels.items() %}
+          <option value="{{ fmt }}" {% if selected_format == fmt %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+        <noscript><button class="btn btn-sm" type="submit">Filter</button></noscript>
+      </form>
+
+      {% if listings %}
+      <table class="table">
+        <thead><tr><th>Team</th><th>Format</th><th>When (UTC)</th><th></th></tr></thead>
+        <tbody>
+          {% for s in listings %}
+          <tr>
+            <td>
+              <a href="{{ url_for('scrims.detail', scrim_id=s.id) }}">{{ s.proposer_name }}</a>{% if s.proposer_tag %} <span class="muted">[{{ s.proposer_tag }}]</span>{% endif %}
+              {% if s.notes %}<span class="cell-sub">{{ s.notes }}</span>{% endif %}
+            </td>
+            <td>
+              {{ format_labels.get(s.format, s.format) }}
+              {% if s.proposer_division %}<span class="cell-sub">{{ s.proposer_division }}</span>{% endif %}
+            </td>
+            <td>{{ s.scheduled_at[:16].replace("T", " ") }}</td>
+            <td>
+              {% if s.proposer_team_id in my_team_ids %}
+                <span class="badge">Your listing</span>
+              {% else %}
+                {% set eligible = my_teams | selectattr("format", "equalto", s.format) | list %}
+                {% if eligible %}
+                <form method="post" action="{{ url_for('scrims.claim_listing', scrim_id=s.id) }}" style="display:inline">
+                  <select name="team_id">
+                    {% for t in eligible %}
+                    <option value="{{ t.rgl_team_id }}">{{ t.name }}</option>
+                    {% endfor %}
+                  </select>
+                  <button class="btn btn-sm btn-primary" type="submit">Claim</button>
+                </form>
+                {% else %}
+                <span class="muted">No same-format team</span>
+                {% endif %}
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <p class="muted">No open listings{% if selected_format %} for this format{% endif %} right now —
+        <a href="{{ url_for('scrims.new_listing_form') }}">post one</a> and let another team claim it.</p>
+      {% endif %}
+    </section>
+
+    <section class="card">
+      <h2>My matches &amp; listings</h2>
+      <h3>Upcoming matches</h3>
+      {% if upcoming %}
+        {% for s in upcoming %}
+        <div class="rail-item">
+          <strong>{{ s.proposer_name }} vs {{ s.opponent_name }}</strong>
+          <span class="muted">{{ format_labels.get(s.format, s.format) }} · {{ s.scheduled_at }}</span>
+          <form method="post" action="{{ url_for('scrims.cancel_scrim', scrim_id=s.id) }}" style="display:inline">
+            <button class="btn btn-sm" type="submit">Cancel</button>
+          </form>
+        </div>
+        {% endfor %}
+      {% else %}<p class="muted">No upcoming matches.</p>{% endif %}
+
+      <h3>My open listings</h3>
+      {% if my_listings %}
+        {% for s in my_listings %}
+        <div class="rail-item">
+          <a href="{{ url_for('scrims.detail', scrim_id=s.id) }}"><strong>{{ s.proposer_name }}</strong></a>
+          <span class="muted">{{ format_labels.get(s.format, s.format) }} · {{ s.scheduled_at }}</span>
+          <form method="post" action="{{ url_for('scrims.cancel_listing_route', scrim_id=s.id) }}" style="display:inline">
+            <button class="btn btn-sm" type="submit">Cancel listing</button>
+          </form>
+        </div>
+        {% endfor %}
+      {% else %}
+      <p class="muted">None yet — <a href="{{ url_for('scrims.new_listing_form') }}">post one</a>.</p>
+      {% endif %}
+    </section>
+  </div>
+
+  <div class="col">
+    <section class="card">
+      <h2>Proposals</h2>
+      <h3>Incoming proposals</h3>
+      {% if incoming %}
+        {% for s in incoming %}
+        <div class="rail-item">
+          <strong>{{ s.proposer_name }}</strong> → {{ s.opponent_name }}
+          <span class="muted">{{ format_labels.get(s.format, s.format) }} · {{ s.scheduled_at }}</span>
           <form method="post" action="{{ url_for('scrims.accept_scrim', scrim_id=s.id) }}" style="display:inline">
             <button class="btn btn-sm btn-primary" type="submit">Accept</button>
           </form>
           <form method="post" action="{{ url_for('scrims.decline_scrim', scrim_id=s.id) }}" style="display:inline">
             <button class="btn btn-sm" type="submit">Decline</button>
           </form>
-        </td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  {% else %}<p class="muted">No incoming proposals.</p>{% endif %}
-</section>
+        </div>
+        {% endfor %}
+      {% else %}<p class="muted">No incoming proposals.</p>{% endif %}
 
-<section class="card">
-  <h2>Outgoing proposals</h2>
-  {% if outgoing %}
-  <table class="table">
-    <thead><tr><th>Your team</th><th>To</th><th>Format</th><th>When (UTC)</th><th></th></tr></thead>
-    <tbody>
-      {% for s in outgoing %}
-      <tr>
-        <td>{{ s.proposer_name }}</td>
-        <td>{{ s.opponent_name }}</td>
-        <td>{{ format_labels.get(s.format, s.format) }}</td>
-        <td>{{ s.scheduled_at }}</td>
-        <td>
+      <h3>Outgoing proposals</h3>
+      {% if outgoing %}
+        {% for s in outgoing %}
+        <div class="rail-item">
+          {{ s.proposer_name }} → <strong>{{ s.opponent_name }}</strong>
+          <span class="muted">{{ format_labels.get(s.format, s.format) }} · {{ s.scheduled_at }}</span>
+          {% if not s.opponent_on_platform %}
+          <span class="muted">Waiting for this team to join the platform to respond.</span>
+          {% endif %}
           <form method="post" action="{{ url_for('scrims.withdraw_scrim', scrim_id=s.id) }}" style="display:inline">
             <button class="btn btn-sm" type="submit">Withdraw</button>
           </form>
-        </td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  {% else %}<p class="muted">No outgoing proposals.</p>{% endif %}
-</section>
-
-<section class="card">
-  <h2>Upcoming matches</h2>
-  {% if upcoming %}
-  <table class="table">
-    <thead><tr><th>Teams</th><th>Format</th><th>When (UTC)</th><th></th></tr></thead>
-    <tbody>
-      {% for s in upcoming %}
-      <tr>
-        <td>{{ s.proposer_name }} vs {{ s.opponent_name }}</td>
-        <td>{{ format_labels.get(s.format, s.format) }}</td>
-        <td>{{ s.scheduled_at }}</td>
-        <td>
-          <form method="post" action="{{ url_for('scrims.cancel_scrim', scrim_id=s.id) }}" style="display:inline">
-            <button class="btn btn-sm" type="submit">Cancel</button>
-          </form>
-        </td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  {% else %}<p class="muted">No upcoming matches.</p>{% endif %}
-</section>
-
-<section class="card">
-  <h2>My open listings</h2>
-  {% if my_listings %}
-  <table class="table">
-    <thead><tr><th>Team</th><th>Format</th><th>When (UTC)</th><th></th></tr></thead>
-    <tbody>
-      {% for s in my_listings %}
-      <tr>
-        <td>{{ s.proposer_name }}</td>
-        <td>{{ format_labels.get(s.format, s.format) }}</td>
-        <td>{{ s.scheduled_at }}</td>
-        <td>
-          <form method="post" action="{{ url_for('scrims.cancel_listing_route', scrim_id=s.id) }}" style="display:inline">
-            <button class="btn btn-sm" type="submit">Cancel listing</button>
-          </form>
-        </td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  {% else %}<p class="muted">No open listings. Post one from the <a href="{{ url_for('scrims.listings') }}">listings page</a>.</p>{% endif %}
-</section>
+        </div>
+        {% endfor %}
+      {% else %}<p class="muted">No outgoing proposals.</p>{% endif %}
+    </section>
+  </div>
+</div>
 {% endblock %}

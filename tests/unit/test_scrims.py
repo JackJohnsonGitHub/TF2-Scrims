@@ -257,3 +257,81 @@ def test_open_listings_filter_by_format(ctx):
     assert len(open_listings()) == 2
     assert [r["proposer_team_id"] for r in open_listings("sixes")] == [101]
     assert [r["proposer_team_id"] for r in open_listings("highlander")] == [303]
+
+
+# --- Expiry (feature 004, FR-003): past listings vanish read-side, stay claimless ---
+
+def backdate(scrim_id, when):
+    from app.db import get_db
+    get_db().execute("UPDATE scrims SET scheduled_at = ? WHERE id = ?", (when, scrim_id))
+    get_db().commit()
+
+
+def test_open_listings_exclude_past(ctx):
+    from app.scrims import create_listing, open_listings
+    fresh = create_listing(A, 101, future())
+    expired = create_listing(C, 303, future())
+    backdate(expired, past(days=1))
+    assert [r["id"] for r in open_listings()] == [fresh]
+    assert open_listings("highlander") == []
+
+
+def test_my_open_listings_exclude_past(ctx):
+    from app.scrims import create_listing, my_open_listings
+    scrim_id = create_listing(A, 101, future())
+    assert [r["id"] for r in my_open_listings(A)] == [scrim_id]
+    backdate(scrim_id, past(days=1))
+    assert my_open_listings(A) == []
+
+
+def test_claim_expired_listing_rejected_and_row_unchanged(ctx):
+    from app.scrims import ScrimError, claim, create_listing, get_scrim
+    scrim_id = create_listing(A, 101, future())
+    backdate(scrim_id, past(days=1))
+    with pytest.raises(ScrimError, match="no longer available"):
+        claim(B, scrim_id, 202)
+    row = get_scrim(scrim_id)
+    assert row["status"] == "open" and row["opponent_team_id"] is None
+
+
+# --- Detail visibility (feature 004, research §6) ---
+
+def viewer(scrim_id, steam_id):
+    from app.scrims import get_scrim_for_viewer
+    return get_scrim_for_viewer(scrim_id, steam_id)
+
+
+def test_open_future_listing_visible_to_any_linked_user(ctx):
+    from app.scrims import create_listing
+    scrim_id = create_listing(A, 101, future())
+    assert viewer(scrim_id, C) is not None  # unrelated team, still linked
+
+
+def test_expired_listing_visible_to_owner_members_only(ctx):
+    from app.scrims import create_listing
+    scrim_id = create_listing(A, 101, future())
+    backdate(scrim_id, past(days=1))
+    assert viewer(scrim_id, A) is not None
+    assert viewer(scrim_id, B) is None
+    assert viewer(scrim_id, C) is None
+
+
+def test_confirmed_scrim_visible_to_participants_only(ctx):
+    from app.scrims import claim, create_listing
+    scrim_id = create_listing(A, 101, future())
+    claim(B, scrim_id, 202)
+    assert viewer(scrim_id, A) is not None
+    assert viewer(scrim_id, B) is not None
+    assert viewer(scrim_id, C) is None
+
+
+def test_proposal_visible_to_participants_only(ctx):
+    from app.scrims import create_proposal
+    scrim_id = create_proposal(A, 101, 202, future())
+    assert viewer(scrim_id, A) is not None
+    assert viewer(scrim_id, B) is not None
+    assert viewer(scrim_id, C) is None
+
+
+def test_missing_scrim_is_none(ctx):
+    assert viewer(9999, A) is None

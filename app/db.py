@@ -57,6 +57,45 @@ CREATE TABLE IF NOT EXISTS scrims (
     updated_at        TEXT NOT NULL,
     notes             TEXT
 );
+
+CREATE TABLE IF NOT EXISTS rgl_rosters (
+    rgl_team_id  INTEGER NOT NULL REFERENCES rgl_teams(rgl_team_id),
+    steam_id     TEXT NOT NULL,
+    name         TEXT NOT NULL,
+    is_leader    INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (rgl_team_id, steam_id)
+);
+
+CREATE TABLE IF NOT EXISTS rgl_roster_meta (
+    rgl_team_id  INTEGER PRIMARY KEY REFERENCES rgl_teams(rgl_team_id),
+    fetched_at   TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS rgl_seasons (
+    season_id         INTEGER PRIMARY KEY,
+    name              TEXT NOT NULL,
+    format            TEXT,
+    division_sorting  TEXT NOT NULL DEFAULT '{}',
+    fetched_at        TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS rgl_season_teams (
+    season_id    INTEGER NOT NULL REFERENCES rgl_seasons(season_id),
+    rgl_team_id  INTEGER NOT NULL,
+    division_id  INTEGER,
+    hydrated_at  TEXT,
+    PRIMARY KEY (season_id, rgl_team_id)
+);
+
+CREATE TABLE IF NOT EXISTS scrim_attendance (
+    scrim_id         INTEGER NOT NULL REFERENCES scrims(id),
+    player_steam_id  TEXT NOT NULL,
+    player_name      TEXT NOT NULL,
+    status           TEXT NOT NULL,
+    marked_by        TEXT NOT NULL REFERENCES users(steam_id),
+    updated_at       TEXT NOT NULL,
+    PRIMARY KEY (scrim_id, player_steam_id)
+);
 """
 
 

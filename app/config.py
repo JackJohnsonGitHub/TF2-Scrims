@@ -39,6 +39,16 @@ class Config:
     RGL_API_BASE = os.environ.get("RGL_API_BASE", "https://api.rgl.gg/v0").rstrip("/")
     RGL_TIMEOUT_SECONDS = float(os.environ.get("RGL_TIMEOUT_SECONDS", "5"))
 
+    # Team rosters are cached in SQLite and refetched from RGL at most this often
+    # (on listing-detail views only — never on the dashboard path).
+    RGL_ROSTER_TTL_SECONDS = float(os.environ.get("RGL_ROSTER_TTL_SECONDS", "3600"))
+
+    # Season directory for the propose flow's division browser (research §8):
+    # season registrations refresh at most daily, and each browse request hydrates
+    # at most this many not-yet-known teams — bounded, no background jobs.
+    RGL_DIRECTORY_TTL_SECONDS = float(os.environ.get("RGL_DIRECTORY_TTL_SECONDS", "86400"))
+    RGL_HYDRATE_BATCH = int(os.environ.get("RGL_HYDRATE_BATCH", "20"))
+
     # Signed-in sessions are persistent; requests past this age are treated as
     # signed out. Default ~30 days; tunable via APP_SESSION_DAYS.
     PERMANENT_SESSION_LIFETIME = timedelta(days=int(os.environ.get("APP_SESSION_DAYS", "30")))

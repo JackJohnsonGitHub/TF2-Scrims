@@ -5,6 +5,7 @@
 {% block content %}
 <div class="page-head">
   <h1>Propose a scrim</h1>
+  <a class="btn" href="{{ url_for('scrims.index') }}">← All scrims</a>
 </div>
 
 <section class="card">
@@ -13,7 +14,7 @@
       <label for="proposer_team_id">Your team</label>
       <select id="proposer_team_id" name="proposer_team_id" required>
         {% for t in my_teams %}
-        <option value="{{ t.rgl_team_id }}">{{ t.name }} ({{ format_labels.get(t.format, t.format) }})</option>
+        <option value="{{ t.rgl_team_id }}" {% if browse and browse.proposing.rgl_team_id == t.rgl_team_id %}selected{% endif %}>{{ t.name }} ({{ format_labels.get(t.format, t.format) }})</option>
         {% endfor %}
       </select>
     </div>
@@ -21,11 +22,15 @@
     <div class="field">
       <label for="opponent_team_id">Opponent team (same format)</label>
       <select id="opponent_team_id" name="opponent_team_id" required>
+        {% if browse and browse.opponent %}
+        <option value="{{ browse.opponent.rgl_team_id }}" selected>{{ browse.opponent.name }} — via division browser</option>
+        {% endif %}
         {% for t in opponents %}
         <option value="{{ t.rgl_team_id }}">{{ t.name }} ({{ format_labels.get(t.format, t.format) }})</option>
         {% endfor %}
       </select>
-      {% if not opponents %}<p class="muted">No other teams of your format are on the platform yet.</p>{% endif %}
+      <p class="muted">The quick pick lists teams already on the platform; use the division
+        browser below to find any registered RGL team.</p>
     </div>
 
     <div class="field">
@@ -40,9 +45,79 @@
     </div>
 
     <button class="btn btn-primary" type="submit">Send proposal</button>
-    <a class="btn" href="{{ url_for('scrims.index') }}">Back</a>
   </form>
 </section>
+
+{% if browse %}
+<section class="card">
+  <h2>Browse RGL teams by division</h2>
+
+  {% if my_teams | length > 1 %}
+  <form method="get" action="{{ url_for('scrims.new') }}" class="filter">
+    <label for="browse_team_id">Browse as</label>
+    <select id="browse_team_id" name="team_id" onchange="this.form.submit()">
+      {% for t in my_teams %}
+      <option value="{{ t.rgl_team_id }}" {% if browse.proposing.rgl_team_id == t.rgl_team_id %}selected{% endif %}>{{ t.name }} ({{ format_labels.get(t.format, t.format) }})</option>
+      {% endfor %}
+    </select>
+    <noscript><button class="btn btn-sm" type="submit">Go</button></noscript>
+  </form>
+  {% endif %}
+
+  {% if browse.no_season %}
+  <p class="muted">No season information for this team yet — refresh your RGL link on the
+    <a href="{{ url_for('rgl.account') }}">account page</a>.</p>
+  {% elif browse.rgl_down %}
+  <p class="muted">We couldn't reach RGL to load the division directory. The quick pick above
+    still works — try again in a bit.</p>
+  {% else %}
+
+  {% if browse.hydrated < browse.total %}
+  <p class="muted">Loaded {{ browse.hydrated }} of {{ browse.total }} teams — refresh to load more.</p>
+  {% endif %}
+
+  <form method="get" action="{{ url_for('scrims.new') }}" class="filter">
+    <input type="hidden" name="team_id" value="{{ browse.proposing.rgl_team_id }}">
+    <label for="division_id">Division — {{ browse.season.name }}</label>
+    <select id="division_id" name="division_id" onchange="this.form.submit()">
+      <option value="">Choose a division…</option>
+      {% for d in browse.divisions %}
+      <option value="{{ d.division_id }}" {% if browse.selected_division == d.division_id %}selected{% endif %}>{{ d.division_name }} ({{ d.team_count }} teams)</option>
+      {% endfor %}
+    </select>
+    <noscript><button class="btn btn-sm" type="submit">Show</button></noscript>
+  </form>
+
+  {% if browse.teams %}
+  <table class="table">
+    <thead><tr><th>Team</th><th>Division</th><th></th><th></th></tr></thead>
+    <tbody>
+      {% for t in browse.teams %}
+      <tr>
+        <td>{{ t.name }}{% if t.tag %} <span class="muted">[{{ t.tag }}]</span>{% endif %}</td>
+        <td>{{ t.division_name or "—" }}</td>
+        <td>
+          {% if t.on_platform %}<span class="badge badge-on">On the platform</span>
+          {% else %}<span class="badge badge-off">not on the platform yet</span>{% endif %}
+        </td>
+        <td>
+          {% if t.rgl_team_id == browse.proposing.rgl_team_id %}
+          <span class="muted">Your team</span>
+          {% else %}
+          <a class="btn btn-sm" href="{{ url_for('scrims.new', team_id=browse.proposing.rgl_team_id, division_id=browse.selected_division, opponent_id=t.rgl_team_id) }}">Select as opponent</a>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% elif browse.selected_division %}
+  <p class="muted">No teams loaded for this division yet{% if browse.hydrated < browse.total %} — refresh to load more{% endif %}.</p>
+  {% endif %}
+
+  {% endif %}
+</section>
+{% endif %}
 
 <script>
   // Store scrim times in UTC: submit the browser's offset so the server converts.

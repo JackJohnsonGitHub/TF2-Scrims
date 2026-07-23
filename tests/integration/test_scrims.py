@@ -181,7 +181,7 @@ def test_listing_post_claim_roundtrip(app, client, link_team):
     assert "Alpha" in client.get("/scrims").get_data(as_text=True)
 
     as_user(client, B)
-    body = client.get("/scrims/listings").get_data(as_text=True)
+    body = client.get("/scrims").get_data(as_text=True)  # merged dashboard (004)
     assert "Alpha" in body
     resp = client.post(f"/scrims/listings/{scrim_id}/claim", data={"team_id": "202"})
     assert resp.status_code == 302
@@ -191,7 +191,9 @@ def test_listing_post_claim_roundtrip(app, client, link_team):
     for user in (A, B):
         as_user(client, user)
         assert "Bravo" in client.get("/scrims").get_data(as_text=True)
-    assert "Alpha" not in client.get("/scrims/listings").get_data(as_text=True)
+    with app.test_request_context():
+        from app.scrims import open_listings
+        assert open_listings() == []
 
 
 def test_listings_filter_by_format(app, client, link_team):
@@ -203,7 +205,7 @@ def test_listings_filter_by_format(app, client, link_team):
     post_listing(client, team=303)
 
     as_user(client, B)
-    body = client.get("/scrims/listings?format=highlander").get_data(as_text=True)
+    body = client.get("/scrims?format=highlander").get_data(as_text=True)  # merged dashboard
     assert "Charlie" in body and "Alpha" not in body
 
 
@@ -239,7 +241,7 @@ def test_owner_cancels_unclaimed_listing(app, client, link_team):
     client.post(f"/scrims/listings/{scrim_id}/cancel")
     assert scrim_status(app, scrim_id) == "cancelled"
     as_user(client, B)
-    assert "Alpha" not in client.get("/scrims/listings").get_data(as_text=True)
+    assert "Alpha" not in client.get("/scrims").get_data(as_text=True)  # merged dashboard
 
 
 def test_unlinked_or_anonymous_listings_redirected(app, client, login):

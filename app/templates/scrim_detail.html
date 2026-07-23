@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% block title %}{{ scrim.proposer_name }} · Scrim listing · TF2 Hosting{% endblock %}
+{% block screen %}scrims{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <h1>Scrim listing</h1>
+  <a class="btn" href="{{ url_for('scrims.index') }}">← All scrims</a>
+</div>
+
+<section class="card">
+  <h2>{{ scrim.proposer_name }}{% if scrim.proposer_tag %} <span class="muted">[{{ scrim.proposer_tag }}]</span>{% endif %}</h2>
+  <dl class="meta">
+    <dt>Format</dt><dd>{{ format_labels.get(scrim.format, scrim.format) }}</dd>
+    <dt>Division</dt><dd>{{ scrim.proposer_division or "—" }}</dd>
+    <dt>When (UTC)</dt><dd>{{ scrim.scheduled_at }}</dd>
+    <dt>Posted (UTC)</dt><dd>{{ scrim.created_at }}</dd>
+    <dt>Status</dt>
+    <dd>
+      {% if scrim.status == "confirmed" %}Confirmed vs {{ scrim.opponent_name }}
+      {% elif scrim.status == "open" and not open_and_future %}Expired
+      {% else %}{{ scrim.status | capitalize }}{% endif %}
+    </dd>
+    {% if scrim.notes %}<dt>Notes</dt><dd>{{ scrim.notes }}</dd>{% endif %}
+  </dl>
+
+  {% if claim_teams %}
+  <form method="post" action="{{ url_for('scrims.claim_listing', scrim_id=scrim.id) }}">
+    <select name="team_id">
+      {% for t in claim_teams %}
+      <option value="{{ t.rgl_team_id }}">{{ t.name }}</option>
+      {% endfor %}
+    </select>
+    <button class="btn btn-primary" type="submit">Claim this scrim</button>
+  </form>
+  {% endif %}
+</section>
+
+{% if attendance is not none %}
+<section class="card">
+  <h2>Attendance</h2>
+  {% if attendance %}
+  <p><strong>{{ attending }} / {{ required }}</strong> attending</p>
+  {% if attendance_locked %}<p class="muted">Read-only — scrim time has passed.</p>{% endif %}
+  <table class="table">
+    <thead><tr><th>Player</th><th></th><th>Status</th><th></th></tr></thead>
+    <tbody>
+      {% for e in attendance %}
+      <tr>
+        <td>{{ e.name }}</td>
+        <td>
+          {% if e.is_leader %}<span class="badge">Leader</span>{% endif %}
+          {% if e.departed %}<span class="muted">no longer on team</span>{% endif %}
+        </td>
+        <td>{{ status_labels.get(e.status, e.status) }}</td>
+        <td>
+          {% if not attendance_locked and (can_mark_all or e.steam_id == current_user.steam_id) %}
+          <form method="post" action="{{ url_for('scrims.set_attendance', scrim_id=scrim.id) }}" style="display:inline">
+            <input type="hidden" name="player_steam_id" value="{{ e.steam_id }}">
+            <input type="hidden" name="player_name" value="{{ e.name }}">
+            <select name="status">
+              {% for value, label in status_labels.items() %}
+              <option value="{{ value }}" {% if e.status == value %}selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+            <button class="btn btn-sm" type="submit">Save</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% if roster_fetched_at %}<p class="muted">Roster from RGL as of {{ roster_fetched_at }} (UTC).</p>{% endif %}
+  {% else %}
+  <p class="muted">Roster unavailable — we couldn't reach RGL for this team. The listing still
+    works; try again in a bit.</p>
+  {% endif %}
+</section>
+{% else %}
+<section class="card">
+  <h2>Team roster</h2>
+  {% if roster %}
+  <table class="table">
+    <thead><tr><th>Player</th><th></th></tr></thead>
+    <tbody>
+      {% for p in roster %}
+      <tr>
+        <td>{{ p.name }}</td>
+        <td>{% if p.is_leader %}<span class="badge">Leader</span>{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% if roster_fetched_at %}<p class="muted">Roster from RGL as of {{ roster_fetched_at }} (UTC).</p>{% endif %}
+  {% elif roster_fetched_at %}
+  <p class="muted">RGL lists no players on this team right now.</p>
+  {% else %}
+  <p class="muted">Roster unavailable — we couldn't reach RGL for this team. The listing still
+    works; try again in a bit.</p>
+  {% endif %}
+</section>
+{% endif %}
+{% endblock %}

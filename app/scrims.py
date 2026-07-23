@@ -160,12 +160,14 @@ def claim(actor: str, scrim_id: int, claiming_team_id: int) -> None:
         raise ScrimError("You cannot claim your own listing.")
     if claiming["format"] != scrim["format"]:
         raise ScrimError("Scrims must be between two teams of the same format.")
-    # Atomic first-claim-wins (FR-011): a concurrent claim finds no `open` row.
+    # Atomic first-claim-wins (FR-011); an expired listing (past scheduled_at)
+    # also stops matching, so it can never be claimed even mid-race (004 FR-003).
     db = get_db()
+    now = utc_now()
     cur = db.execute(
         """UPDATE scrims SET status = 'confirmed', opponent_team_id = ?, updated_at = ?
-           WHERE id = ? AND status = 'open'""",
-        (claiming_team_id, utc_now(), scrim_id))
+           WHERE id = ? AND status = 'open' AND scheduled_at > ?""",
+        (claiming_team_id, now, scrim_id, now))
     db.commit()
     if cur.rowcount == 0:
         raise ScrimError("This listing is no longer available.", status=409)
@@ -183,7 +185,10 @@ def cancel_listing(actor: str, scrim_id: int) -> None:
 
 _SELECT = """
     SELECT s.*, pt.name AS proposer_name, pt.tag AS proposer_tag,
-           ot.name AS opponent_name, ot.tag AS opponent_tag
+           pt.division_name AS proposer_division,
+           ot.name AS opponent_name, ot.tag AS opponent_tag,
+           EXISTS(SELECT 1 FROM rgl_memberships m
+                  WHERE m.rgl_team_id = s.opponent_team_id) AS opponent_on_platform
     FROM scrims s
     JOIN rgl_teams pt ON pt.rgl_team_id = s.proposer_team_id
     LEFT JOIN rgl_teams ot ON ot.rgl_team_id = s.opponent_team_id
@@ -194,6 +199,24 @@ _MY_TEAMS = "(SELECT rgl_team_id FROM rgl_memberships WHERE steam_id = ?)"
 
 def get_scrim(scrim_id: int) -> sqlite3.Row | None:
     return get_db().execute(_SELECT + " WHERE s.id = ?", (scrim_id,)).fetchone()
+
+
+def get_scrim_for_viewer(scrim_id: int, steam_id: str) -> sqlite3.Row | None:
+    """Detail-page visibility (004 research §6): an open, *future* listing is
+    visible to any RGL-linked user (that's what the dashboard exposes); anything
+    else — claimed, cancelled, expired, or proposal-origin — only to members of a
+    participating team. None means render 404."""
+    scrim = get_scrim(scrim_id)
+    if scrim is None:
+        return None
+    if (scrim["origin"] == "listing" and scrim["status"] == "open"
+            and scrim["scheduled_at"] > utc_now()):
+        return scrim
+    if is_member(steam_id, scrim["proposer_team_id"]):
+        return scrim
+    if scrim["opponent_team_id"] and is_member(steam_id, scrim["opponent_team_id"]):
+        return scrim
+    return None
 
 
 def incoming_pending(steam_id: str) -> list[sqlite3.Row]:
@@ -218,15 +241,19 @@ def upcoming_confirmed(steam_id: str) -> list[sqlite3.Row]:
 
 
 def my_open_listings(steam_id: str) -> list[sqlite3.Row]:
+    """The user's own open listings, excluding expired ones (004 FR-003)."""
     return get_db().execute(
         _SELECT + f" WHERE s.status = 'open' AND s.proposer_team_id IN {_MY_TEAMS}"
-        " ORDER BY s.scheduled_at", (steam_id,)).fetchall()
+        " AND s.scheduled_at > ? ORDER BY s.scheduled_at",
+        (steam_id, utc_now())).fetchall()
 
 
 def open_listings(format_: str | None = None) -> list[sqlite3.Row]:
-    query = _SELECT + " WHERE s.status = 'open'"
-    params: tuple = ()
+    """Open future listings (all teams). Expiry is read-side: rows whose
+    scheduled_at has passed simply stop matching (004 FR-003 / SC-002)."""
+    query = _SELECT + " WHERE s.status = 'open' AND s.scheduled_at > ?"
+    params: tuple = (utc_now(),)
     if format_:
         query += " AND s.format = ?"
-        params = (format_,)
+        params += (format_,)
     return get_db().execute(query + " ORDER BY s.scheduled_at", params).fetchall()

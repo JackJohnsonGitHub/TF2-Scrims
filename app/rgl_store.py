@@ -6,11 +6,15 @@ every link/refresh so teams the user left drop out. Unlink removes the link and
 the user's memberships but keeps the shared `rgl_teams` rows (other members and
 existing scrims still reference them).
 """
+import json
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
+from flask import current_app
+
+from . import rgl
 from .db import get_db
-from .rgl import RglProfile
+from .rgl import RglProfile, RglRosterPlayer
 
 
 def utc_now() -> str:
@@ -109,3 +113,214 @@ def unlink(steam_id: str) -> None:
     db.execute("DELETE FROM rgl_memberships WHERE steam_id = ?", (steam_id,))
     db.execute("DELETE FROM rgl_links WHERE steam_id = ?", (steam_id,))
     db.commit()
+
+
+# --- Team rosters (feature 004) ---
+# Cached player lists keyed by RGL team id, refreshed at most every
+# RGL_ROSTER_TTL_SECONDS and only from listing-detail views. A failed fetch never
+# touches the cache or the stamp (stale-if-error, research §2).
+
+def save_roster(rgl_team_id: int, players: list[RglRosterPlayer]) -> None:
+    """Atomically replace a team's cached roster and stamp the successful fetch."""
+    db = get_db()
+    now = utc_now()
+    db.execute("DELETE FROM rgl_rosters WHERE rgl_team_id = ?", (rgl_team_id,))
+    for p in players:
+        db.execute(
+            """INSERT INTO rgl_rosters (rgl_team_id, steam_id, name, is_leader)
+               VALUES (?, ?, ?, ?)""",
+            (rgl_team_id, p.steam_id, p.name, int(p.is_leader)),
+        )
+    db.execute(
+        """INSERT INTO rgl_roster_meta (rgl_team_id, fetched_at) VALUES (?, ?)
+           ON CONFLICT(rgl_team_id) DO UPDATE SET fetched_at = excluded.fetched_at""",
+        (rgl_team_id, now),
+    )
+    db.commit()
+
+
+def get_roster(rgl_team_id: int) -> list[sqlite3.Row]:
+    return get_db().execute(
+        """SELECT * FROM rgl_rosters WHERE rgl_team_id = ?
+           ORDER BY is_leader DESC, name COLLATE NOCASE""",
+        (rgl_team_id,),
+    ).fetchall()
+
+
+def roster_fetched_at(rgl_team_id: int) -> str | None:
+    row = get_db().execute(
+        "SELECT fetched_at FROM rgl_roster_meta WHERE rgl_team_id = ?",
+        (rgl_team_id,),
+    ).fetchone()
+    return row["fetched_at"] if row else None
+
+
+def ensure_roster(rgl_team_id: int) -> tuple[list[sqlite3.Row], str | None]:
+    """Return (cached roster, fetched_at), refreshing from RGL when the stamp is
+    missing or older than the TTL. Empty rows with a None stamp means the roster
+    is unknown (never fetched successfully) — render the friendly notice."""
+    ttl = current_app.config["RGL_ROSTER_TTL_SECONDS"]
+    cutoff = (datetime.now(timezone.utc) - timedelta(seconds=ttl)).isoformat(
+        timespec="seconds")
+    stamp = roster_fetched_at(rgl_team_id)
+    if stamp is None or stamp < cutoff:
+        result = rgl.fetch_team_roster(rgl_team_id)
+        if result.outcome == "ok":
+            save_roster(rgl_team_id, result.players)
+    return get_roster(rgl_team_id), roster_fetched_at(rgl_team_id)
+
+
+# --- Season directory (feature 004 US4) ---
+# RGL's season endpoint yields only team ids + a division sort map; names come from
+# per-team fetches, so the directory hydrates in bounded batches (research §8).
+
+def get_season(season_id: int) -> sqlite3.Row | None:
+    return get_db().execute(
+        "SELECT * FROM rgl_seasons WHERE season_id = ?", (season_id,)
+    ).fetchone()
+
+
+def ensure_season(season_id: int) -> sqlite3.Row | None:
+    """Fetch/refresh the season header + participation list within the directory
+    TTL. A failed refresh keeps the cached season (stale-if-error); None means
+    nothing cached and RGL unreachable — render the friendly notice."""
+    ttl = current_app.config["RGL_DIRECTORY_TTL_SECONDS"]
+    cutoff = (datetime.now(timezone.utc) - timedelta(seconds=ttl)).isoformat(
+        timespec="seconds")
+    row = get_season(season_id)
+    if row is not None and row["fetched_at"] >= cutoff:
+        return row
+
+    season = rgl.fetch_season(season_id)
+    if season.outcome != "ok":
+        return row  # stale-if-error (None when never fetched)
+
+    db = get_db()
+    db.execute(
+        """INSERT INTO rgl_seasons (season_id, name, format, division_sorting, fetched_at)
+           VALUES (?, ?, ?, ?, ?)
+           ON CONFLICT(season_id) DO UPDATE SET name = excluded.name,
+               format = excluded.format, division_sorting = excluded.division_sorting,
+               fetched_at = excluded.fetched_at""",
+        (season_id, season.name, season.format,
+         json.dumps(season.division_sorting), utc_now()),
+    )
+    for team_id in season.team_ids:
+        db.execute(
+            "INSERT OR IGNORE INTO rgl_season_teams (season_id, rgl_team_id) VALUES (?, ?)",
+            (season_id, team_id),
+        )
+    db.commit()
+    return get_season(season_id)
+
+
+def season_progress(season_id: int) -> tuple[int, int]:
+    row = get_db().execute(
+        """SELECT COUNT(hydrated_at) AS done, COUNT(*) AS total
+           FROM rgl_season_teams WHERE season_id = ?""",
+        (season_id,),
+    ).fetchone()
+    return row["done"], row["total"]
+
+
+def hydrate_season_teams(season_id: int, batch: int) -> int:
+    """Hydrate up to `batch` pending directory teams via the team endpoint,
+    upserting each into the shared `rgl_teams` identity store. Stops early on an
+    RGL outage (pending rows retry on a later request); dead teams (404) are
+    stamped with no division so they drop out instead of retrying forever.
+    Returns how many teams were hydrated."""
+    season = get_season(season_id)
+    if season is None:
+        return 0
+    pending = get_db().execute(
+        """SELECT rgl_team_id FROM rgl_season_teams
+           WHERE season_id = ? AND hydrated_at IS NULL
+           ORDER BY rgl_team_id LIMIT ?""",
+        (season_id, batch),
+    ).fetchall()
+
+    db = get_db()
+    hydrated = 0
+    now = utc_now()
+    for row in pending:
+        team_id = row["rgl_team_id"]
+        summary = rgl.fetch_team_summary(team_id)
+        if summary.outcome == "unavailable":
+            break  # RGL is down — don't hammer the rest of the batch
+        if summary.outcome == "ok":
+            db.execute(
+                """INSERT INTO rgl_teams (rgl_team_id, name, tag, format, division_name,
+                                          season_id, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(rgl_team_id) DO UPDATE SET name = excluded.name,
+                       tag = excluded.tag, format = excluded.format,
+                       division_name = excluded.division_name,
+                       season_id = excluded.season_id, updated_at = excluded.updated_at""",
+                (team_id, summary.name, summary.tag, season["format"],
+                 summary.division_name, season_id, now),
+            )
+            hydrated += 1
+        # ok and no_team both stamp the row; no_team keeps division_id NULL so the
+        # browser skips it.
+        db.execute(
+            """UPDATE rgl_season_teams SET division_id = ?, hydrated_at = ?
+               WHERE season_id = ? AND rgl_team_id = ?""",
+            (summary.division_id if summary.outcome == "ok" else None, now,
+             season_id, team_id),
+        )
+    db.commit()
+    return hydrated
+
+
+def division_browser(season_id: int, division_id: int | None = None
+                     ) -> tuple[list[dict], list[sqlite3.Row]]:
+    """Hydrated divisions (ordered by the season's divisionSorting rank) and, when
+    a division is chosen, its teams with on-platform flags."""
+    season = get_season(season_id)
+    sorting = json.loads(season["division_sorting"]) if season else {}
+    divisions = [
+        dict(r)
+        for r in get_db().execute(
+            """SELECT st.division_id, t.division_name, COUNT(*) AS team_count
+               FROM rgl_season_teams st
+               JOIN rgl_teams t ON t.rgl_team_id = st.rgl_team_id
+               WHERE st.season_id = ? AND st.division_id IS NOT NULL
+               GROUP BY st.division_id, t.division_name""",
+            (season_id,),
+        )
+    ]
+    divisions.sort(key=lambda d: (sorting.get(str(d["division_id"]), 1_000_000),
+                                  d["division_name"] or ""))
+    teams: list[sqlite3.Row] = []
+    if division_id is not None:
+        teams = get_db().execute(
+            """SELECT t.*, EXISTS(SELECT 1 FROM rgl_memberships m
+                                  WHERE m.rgl_team_id = t.rgl_team_id) AS on_platform
+               FROM rgl_season_teams st
+               JOIN rgl_teams t ON t.rgl_team_id = st.rgl_team_id
+               WHERE st.season_id = ? AND st.division_id = ?
+               ORDER BY t.name COLLATE NOCASE""",
+            (season_id, division_id),
+        ).fetchall()
+    return divisions, teams
+
+
+def team_on_platform(rgl_team_id: int) -> bool:
+    """True when at least one member of the team has an account here (FR-019/020)."""
+    row = get_db().execute(
+        "SELECT 1 FROM rgl_memberships WHERE rgl_team_id = ? LIMIT 1",
+        (rgl_team_id,),
+    ).fetchone()
+    return row is not None
+
+
+def platform_teams(format_: str | None = None) -> list[sqlite3.Row]:
+    """Teams with at least one member on the platform — the propose form's quick
+    pick. The division browser is the path to everything else (research §9)."""
+    query = """SELECT DISTINCT t.* FROM rgl_teams t
+               JOIN rgl_memberships m ON m.rgl_team_id = t.rgl_team_id"""
+    params: tuple = ()
+    if format_:
+        query += " WHERE t.format = ?"
+        params = (format_,)
+    return get_db().execute(query + " ORDER BY t.format, t.name", params).fetchall()
