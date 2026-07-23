@@ -2,7 +2,7 @@
 from functools import wraps
 from urllib.parse import urlparse
 
-from flask import g, redirect, request, session, url_for
+from flask import flash, g, redirect, request, session, url_for
 
 from .accounts import get_by_steam_id
 
@@ -33,6 +33,24 @@ def login_required(view):
     def wrapped(*args, **kwargs):
         if current_user() is None:
             return redirect(url_for("auth.login", next=request.full_path.rstrip("?")))
+        return view(*args, **kwargs)
+
+    return wrapped
+
+
+def rgl_link_required(view):
+    """Gate for scheduling actions (FR-008): the user must be RGL-linked with at
+    least one current team. Apply under `login_required`."""
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        from .rgl_store import get_user_teams
+
+        user = current_user()
+        if user is None:
+            return redirect(url_for("auth.login", next=request.full_path.rstrip("?")))
+        if not get_user_teams(user["steam_id"]):
+            flash("Link your RGL account and be on a team to schedule scrims.", "error")
+            return redirect(url_for("rgl.account"))
         return view(*args, **kwargs)
 
     return wrapped

@@ -33,6 +33,12 @@ class Config:
     # the container.
     DB_PATH = os.environ.get("DB_PATH", "app.db")
 
+    # RGL public API (profile + current teams, keyed by SteamID64). Public and
+    # keyless; called only on link/refresh, never per page load. The short timeout
+    # keeps an RGL outage from taking the page down (Principle VII).
+    RGL_API_BASE = os.environ.get("RGL_API_BASE", "https://api.rgl.gg/v0").rstrip("/")
+    RGL_TIMEOUT_SECONDS = float(os.environ.get("RGL_TIMEOUT_SECONDS", "5"))
+
     # Signed-in sessions are persistent; requests past this age are treated as
     # signed out. Default ~30 days; tunable via APP_SESSION_DAYS.
     PERMANENT_SESSION_LIFETIME = timedelta(days=int(os.environ.get("APP_SESSION_DAYS", "30")))

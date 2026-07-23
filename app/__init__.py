@@ -26,12 +26,16 @@ def create_app(config_object: type[Config] = Config) -> Flask:
     from .routes.servers import bp as servers_bp
     from .routes.console import bp as console_bp
     from .routes.auth import bp as auth_bp
+    from .routes.rgl import bp as rgl_bp
+    from .routes.scrims import bp as scrims_bp
 
     app.register_blueprint(health_bp)
     app.register_blueprint(auth_bp)
     app.register_blueprint(dashboard_bp)
     app.register_blueprint(servers_bp)
     app.register_blueprint(console_bp)
+    app.register_blueprint(rgl_bp)
+    app.register_blueprint(scrims_bp)
 
     # Expose the signed-in user to every template (header identity).
     @app.context_processor

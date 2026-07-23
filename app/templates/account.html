@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}Account · TF2 Hosting{% endblock %}
+{% block screen %}account{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <h1>Account</h1>
+</div>
+
+<section class="card">
+  <h2>RGL</h2>
+
+  {% if not link %}
+    <p>Your RGL account is <strong>not linked</strong>. Linking uses your signed-in
+       Steam identity — no RGL ID or URL needed.</p>
+    <form method="post" action="{{ url_for('rgl.link') }}">
+      <button class="btn btn-primary" type="submit">Link RGL account</button>
+    </form>
+
+  {% elif link.state == 'no_profile' %}
+    <p>No RGL profile was found for your Steam account. If you've recently
+       registered with RGL, try again.</p>
+    <form method="post" action="{{ url_for('rgl.link') }}">
+      <button class="btn btn-primary" type="submit">Try again</button>
+    </form>
+
+  {% else %}
+    <p class="rgl-profile">
+      <strong>{{ link.profile_name }}</strong>
+      {% if link.is_verified %}<span class="badge badge-on">Verified</span>{% endif %}
+      {% if link.is_banned %}<span class="badge badge-off">Banned</span>{% endif %}
+      {% if link.is_on_probation %}<span class="badge badge-demo">On probation</span>{% endif %}
+    </p>
+
+    {% if teams_by_format %}
+      {% for fmt, teams in teams_by_format.items() %}
+        <h3>{{ format_labels.get(fmt, fmt) }}</h3>
+        <table class="table">
+          <thead><tr><th>Team</th><th>Tag</th><th>Division</th><th>Season</th></tr></thead>
+          <tbody>
+            {% for t in teams %}
+            <tr>
+              <td>{{ t.name }}</td>
+              <td>{{ t.tag or "—" }}</td>
+              <td>{{ t.division_name or "—" }}</td>
+              <td>{{ t.season_id or "—" }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% endfor %}
+    {% else %}
+      <p>You have <strong>no current team</strong> on RGL. Join a team to schedule scrims.</p>
+    {% endif %}
+
+    <p class="muted">Last refreshed: {{ link.last_refreshed_at }} (UTC)</p>
+    <div class="actions">
+      <form method="post" action="{{ url_for('rgl.refresh') }}" style="display:inline">
+        <button class="btn btn-sm" type="submit">Refresh</button>
+      </form>
+      <form method="post" action="{{ url_for('rgl.unlink_account') }}" style="display:inline">
+        <button class="btn btn-sm" type="submit">Unlink</button>
+      </form>
+    </div>
+  {% endif %}
+</section>
+{% endblock %}

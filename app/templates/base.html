@@ -13,6 +13,8 @@
       {% if current_user %}
         <a href="{{ url_for('dashboard.index') }}">Dashboard</a>
         <a href="{{ url_for('servers.list_servers') }}">Servers</a>
+        <a href="{{ url_for('scrims.index') }}">Scrims</a>
+        <a href="{{ url_for('rgl.account') }}">Account</a>
         <a class="nav-cta" href="{{ url_for('servers.new_server') }}">+ Create server</a>
       {% endif %}
     </nav>

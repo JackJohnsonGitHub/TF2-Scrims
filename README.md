@@ -57,8 +57,11 @@ uvx --from git+https://github.com/github/spec-kit.git specify init --here
 
 ## Running the app
 
-Features so far: `001-basic-flask-app` (navigable UI shell, placeholder data) and
-`002-steam-sign-in` (Steam OpenID sign-in + owner-only route guards). To run it:
+Features so far: `001-basic-flask-app` (navigable UI shell, placeholder data),
+`002-steam-sign-in` (Steam OpenID sign-in + owner-only route guards), and
+`003-link-rgl-account` (link your RGL profile/teams from your verified SteamID and
+schedule scrims between teams — directed propose→accept or open listing→claim;
+schedule-only, no server provisioning). To run it:
 
 ```bash
 # local dev (uv is the preferred Python tool on this machine)
@@ -73,7 +76,7 @@ export DB_PATH="./app.db"
 
 flask --app app run --debug          # http://127.0.0.1:5000
 
-# tests (Steam is mocked — no network, no key needed)
+# tests (Steam and RGL are mocked — no network, no key needed)
 python -m pytest -q
 
 # container (iriga-style multi-stage build) — runs Gunicorn, non-root
@@ -89,6 +92,11 @@ kubectl apply -f deploy/pvc.yaml -f deploy/deployment.yaml -f deploy/service.yam
 > **Exposure:** real Steam sign-in needs the app reachable by users over **HTTPS** at a
 > stable `APP_BASE_URL` (the OpenID realm). The 001 `ClusterIP` Service isn't enough on
 > its own — add ingress/TLS before enabling sign-in for real users.
+
+> **Egress:** RGL linking (003) makes outbound HTTPS calls to `api.rgl.gg` (public,
+> keyless; on link/refresh only). No NetworkPolicy restricts egress on `mke` today, so no
+> manifest change is needed — but keep this dependency in mind if egress is ever locked
+> down. Optional env: `RGL_API_BASE`, `RGL_TIMEOUT_SECONDS` (default 5s).
 
 ## Docs
 

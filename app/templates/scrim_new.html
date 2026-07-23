@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}Propose a scrim · TF2 Hosting{% endblock %}
+{% block screen %}scrim-new{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <h1>Propose a scrim</h1>
+</div>
+
+<section class="card">
+  <form method="post" action="{{ url_for('scrims.propose') }}">
+    <div class="field">
+      <label for="proposer_team_id">Your team</label>
+      <select id="proposer_team_id" name="proposer_team_id" required>
+        {% for t in my_teams %}
+        <option value="{{ t.rgl_team_id }}">{{ t.name }} ({{ format_labels.get(t.format, t.format) }})</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="field">
+      <label for="opponent_team_id">Opponent team (same format)</label>
+      <select id="opponent_team_id" name="opponent_team_id" required>
+        {% for t in opponents %}
+        <option value="{{ t.rgl_team_id }}">{{ t.name }} ({{ format_labels.get(t.format, t.format) }})</option>
+        {% endfor %}
+      </select>
+      {% if not opponents %}<p class="muted">No other teams of your format are on the platform yet.</p>{% endif %}
+    </div>
+
+    <div class="field">
+      <label for="scheduled_at">Date &amp; time (your local time)</label>
+      <input type="datetime-local" id="scheduled_at" name="scheduled_at" required>
+      <input type="hidden" name="tz_offset" id="tz_offset" value="0">
+    </div>
+
+    <div class="field">
+      <label for="notes">Notes (optional)</label>
+      <input type="text" id="notes" name="notes" maxlength="200" placeholder="e.g. maps, server preferences">
+    </div>
+
+    <button class="btn btn-primary" type="submit">Send proposal</button>
+    <a class="btn" href="{{ url_for('scrims.index') }}">Back</a>
+  </form>
+</section>
+
+<script>
+  // Store scrim times in UTC: submit the browser's offset so the server converts.
+  document.getElementById("tz_offset").value = new Date().getTimezoneOffset();
+</script>
+{% endblock %}

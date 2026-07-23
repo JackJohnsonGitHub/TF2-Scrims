@@ -16,6 +16,47 @@ CREATE TABLE IF NOT EXISTS users (
     created_at     TEXT NOT NULL,
     last_login_at  TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS rgl_links (
+    steam_id           TEXT PRIMARY KEY REFERENCES users(steam_id),
+    profile_name       TEXT,
+    state              TEXT NOT NULL,
+    is_verified        INTEGER NOT NULL DEFAULT 0,
+    is_banned          INTEGER NOT NULL DEFAULT 0,
+    is_on_probation    INTEGER NOT NULL DEFAULT 0,
+    linked_at          TEXT NOT NULL,
+    last_refreshed_at  TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS rgl_teams (
+    rgl_team_id    INTEGER PRIMARY KEY,
+    name           TEXT NOT NULL,
+    tag            TEXT,
+    format         TEXT NOT NULL,
+    division_name  TEXT,
+    season_id      INTEGER,
+    updated_at     TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS rgl_memberships (
+    steam_id     TEXT NOT NULL REFERENCES users(steam_id),
+    rgl_team_id  INTEGER NOT NULL REFERENCES rgl_teams(rgl_team_id),
+    PRIMARY KEY (steam_id, rgl_team_id)
+);
+
+CREATE TABLE IF NOT EXISTS scrims (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    format            TEXT NOT NULL,
+    scheduled_at      TEXT NOT NULL,
+    origin            TEXT NOT NULL,
+    proposer_team_id  INTEGER NOT NULL REFERENCES rgl_teams(rgl_team_id),
+    opponent_team_id  INTEGER REFERENCES rgl_teams(rgl_team_id),
+    status            TEXT NOT NULL,
+    created_by        TEXT NOT NULL REFERENCES users(steam_id),
+    created_at        TEXT NOT NULL,
+    updated_at        TEXT NOT NULL,
+    notes             TEXT
+);
 """
 
 
