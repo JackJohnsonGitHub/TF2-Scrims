@@ -11,8 +11,8 @@
   </div>
 </div>
 
-<div class="scrims-cols">
-  <div class="col">
+<div class="cols">
+  <div class="col-main">
     <section class="card">
       <h2>Open listings</h2>
       <form method="get" action="{{ url_for('scrims.index') }}" class="filter">
@@ -28,7 +28,7 @@
 
       {% if listings %}
       <table class="table">
-        <thead><tr><th>Team</th><th>Format</th><th>When (UTC)</th><th></th></tr></thead>
+        <thead><tr><th>Team</th><th>Format</th><th>When</th><th></th></tr></thead>
         <tbody>
           {% for s in listings %}
           <tr>
@@ -36,11 +36,11 @@
               <a href="{{ url_for('scrims.detail', scrim_id=s.id) }}">{{ s.proposer_name }}</a>{% if s.proposer_tag %} <span class="muted">[{{ s.proposer_tag }}]</span>{% endif %}
               {% if s.notes %}<span class="cell-sub">{{ s.notes }}</span>{% endif %}
             </td>
-            <td>
+            <td class="nowrap">
               {{ format_labels.get(s.format, s.format) }}
               {% if s.proposer_division %}<span class="cell-sub">{{ s.proposer_division }}</span>{% endif %}
             </td>
-            <td>{{ s.scheduled_at[:16].replace("T", " ") }}</td>
+            <td>{{ s.scheduled_at | local_dt }}</td>
             <td>
               {% if s.proposer_team_id in my_team_ids %}
                 <span class="badge">Your listing</span>
@@ -48,6 +48,7 @@
                 {% set eligible = my_teams | selectattr("format", "equalto", s.format) | list %}
                 {% if eligible %}
                 <form method="post" action="{{ url_for('scrims.claim_listing', scrim_id=s.id) }}" style="display:inline">
+                  <input type="hidden" name="next" value="{{ request.full_path.rstrip('?') }}">
                   <select name="team_id">
                     {% for t in eligible %}
                     <option value="{{ t.rgl_team_id }}">{{ t.name }}</option>
@@ -77,8 +78,9 @@
         {% for s in upcoming %}
         <div class="rail-item">
           <strong>{{ s.proposer_name }} vs {{ s.opponent_name }}</strong>
-          <span class="muted">{{ format_labels.get(s.format, s.format) }} · {{ s.scheduled_at }}</span>
+          <span class="rail-meta">{{ format_labels.get(s.format, s.format) }} · {{ s.scheduled_at | local_dt }}</span>
           <form method="post" action="{{ url_for('scrims.cancel_scrim', scrim_id=s.id) }}" style="display:inline">
+            <input type="hidden" name="next" value="{{ request.full_path.rstrip('?') }}">
             <button class="btn btn-sm" type="submit">Cancel</button>
           </form>
         </div>
@@ -90,8 +92,9 @@
         {% for s in my_listings %}
         <div class="rail-item">
           <a href="{{ url_for('scrims.detail', scrim_id=s.id) }}"><strong>{{ s.proposer_name }}</strong></a>
-          <span class="muted">{{ format_labels.get(s.format, s.format) }} · {{ s.scheduled_at }}</span>
+          <span class="rail-meta">{{ format_labels.get(s.format, s.format) }} · {{ s.scheduled_at | local_dt }}</span>
           <form method="post" action="{{ url_for('scrims.cancel_listing_route', scrim_id=s.id) }}" style="display:inline">
+            <input type="hidden" name="next" value="{{ request.full_path.rstrip('?') }}">
             <button class="btn btn-sm" type="submit">Cancel listing</button>
           </form>
         </div>
@@ -102,7 +105,7 @@
     </section>
   </div>
 
-  <div class="col">
+  <div class="col-side">
     <section class="card">
       <h2>Proposals</h2>
       <h3>Incoming proposals</h3>
@@ -110,11 +113,13 @@
         {% for s in incoming %}
         <div class="rail-item">
           <strong>{{ s.proposer_name }}</strong> → {{ s.opponent_name }}
-          <span class="muted">{{ format_labels.get(s.format, s.format) }} · {{ s.scheduled_at }}</span>
+          <span class="rail-meta">{{ format_labels.get(s.format, s.format) }} · {{ s.scheduled_at | local_dt }}</span>
           <form method="post" action="{{ url_for('scrims.accept_scrim', scrim_id=s.id) }}" style="display:inline">
+            <input type="hidden" name="next" value="{{ request.full_path.rstrip('?') }}">
             <button class="btn btn-sm btn-primary" type="submit">Accept</button>
           </form>
           <form method="post" action="{{ url_for('scrims.decline_scrim', scrim_id=s.id) }}" style="display:inline">
+            <input type="hidden" name="next" value="{{ request.full_path.rstrip('?') }}">
             <button class="btn btn-sm" type="submit">Decline</button>
           </form>
         </div>
@@ -126,11 +131,12 @@
         {% for s in outgoing %}
         <div class="rail-item">
           {{ s.proposer_name }} → <strong>{{ s.opponent_name }}</strong>
-          <span class="muted">{{ format_labels.get(s.format, s.format) }} · {{ s.scheduled_at }}</span>
+          <span class="rail-meta">{{ format_labels.get(s.format, s.format) }} · {{ s.scheduled_at | local_dt }}</span>
           {% if not s.opponent_on_platform %}
-          <span class="muted">Waiting for this team to join the platform to respond.</span>
+          <span class="rail-meta">Waiting for this team to join the platform to respond.</span>
           {% endif %}
           <form method="post" action="{{ url_for('scrims.withdraw_scrim', scrim_id=s.id) }}" style="display:inline">
+            <input type="hidden" name="next" value="{{ request.full_path.rstrip('?') }}">
             <button class="btn btn-sm" type="submit">Withdraw</button>
           </form>
         </div>

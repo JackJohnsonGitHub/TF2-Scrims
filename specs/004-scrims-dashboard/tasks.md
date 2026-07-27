@@ -2,7 +2,8 @@
 
 **Input**: Design documents from `/specs/004-scrims-dashboard/`
 
-**Prerequisites**: plan.md, spec.md, research.md, data-model.md, contracts/dashboard-routes.md, quickstart.md
+**Prerequisites**: plan.md, spec.md, research.md, data-model.md, contracts/dashboard-routes.md,
+contracts/propose-discovery-routes.md, quickstart.md
 
 **Tests**: Included — the plan's Technical Context defines the test coverage explicitly (unit +
 integration, RGL mocked), continuing the 001–003 TDD convention. Write each story's tests first
@@ -13,7 +14,7 @@ and see them fail before implementing.
 ## Format: `[ID] [P?] [Story] Description`
 
 - **[P]**: Can run in parallel (different files, no dependencies)
-- **[Story]**: US1 (dashboard), US2 (roster detail), US3 (attendance)
+- **[Story]**: US1 (dashboard), US2 (roster detail), US3 (attendance), US4 (opponent discovery)
 
 ## Phase 1: Setup
 
@@ -117,7 +118,7 @@ record in research.md §7; spec clarifications + FR-002/FR-004/FR-007 updated to
 
 - [X] T026 Restructure app/templates/scrims.html into a two-column grid (`.scrims-cols` in app/static/css/app.css): main column = Open listings + "My matches & listings" (upcoming + own listings); right rail = "Proposals" (incoming/outgoing) as compact rail items; collapses under 900px
 - [X] T027 Move the post-a-listing form to its own page: new `GET /scrims/listings/new` (`new_listing_form`) rendering app/templates/listing_new.html; POST unchanged, validation errors redirect back to the form page; dashboard/empty-state links point at the page; contract route table updated
-- [X] T028 Remove horizontal scrolling from Open listings: widen the scrims screen to 1200px, compact the table to 4 columns (notes under team, division under format as `.cell-sub` lines, times as `YYYY-MM-DD HH:MM` UTC); keep `overflow-x: auto` as a safety net only; full suite re-run green (156 passed)
+- [X] T028 Remove horizontal scrolling from Open listings: widen the scrims screen to 1200px, compact the table to 4 columns (notes under team, division under format as `.cell-sub` lines, times as `YYYY-MM-DD HH:MM` UTC — *(superseded by T045: times now render in the viewer's own timezone)*); keep `overflow-x: auto` as a safety net only; full suite re-run green (156 passed)
 
 ---
 
@@ -216,10 +217,62 @@ working and never lists off-platform teams.
 
 ## Notes
 
-- 36 tasks: Setup 1 · Foundational 5 · US1 7 · US2 5 · US3 5 · Polish 2 · UI adjustments 3 ·
-  US4 11 (T029–T039, added 2026-07-23).
+- 47 tasks (T001–T047) across 12 phases: Setup 1 · Foundational 5 · US1 7 · US2 5 · US3 5 ·
+  Polish 2 · UI adjustments 3 (T026–T028, 2026-07-23) · US4 11 (T029–T039, added 2026-07-23) ·
+  Convergence 4 (T040–T043) · Convergence 1 (T044) · UI adjustments 2 (T045–T046, 2026-07-27) ·
+  Convergence 1 (T047).
 - RGL is always mocked in tests (003 convention); the live endpoint shapes were verified during
   research (research.md §1 rosters, §8 seasons — no divisions/search/bulk endpoints exist).
 - Timestamps stay ISO-8601 UTC strings; comparisons are lexicographic — never introduce another
   format.
 - The scrims area keeps `@login_required` + `@rgl_link_required` on every new route (FR-008).
+
+---
+
+## Phase 9: Convergence
+
+**Added 2026-07-27** by `/speckit-converge`. Assessed the current code against spec.md (including
+the 2026-07-27 post-analysis refinements — FR-022, the sharpened FR-012, restated SC-005/SC-006),
+plan.md, and T001–T039. Baseline at assessment time: `python3 -m pytest tests/ -q` → 180 passed.
+Schema, config, expiry, roster cache, attendance authorization, detail visibility, and the whole
+US4 division browser already satisfy their requirements; the items below are what remains.
+
+- [X] T040 Render the reason the claim action is unavailable on the listing detail page in app/templates/scrim_detail.html — an `{% else %}` on the `claim_teams` check distinguishing own-team listing (`is_own`), no same-format team, and listing no longer open/future (`open_and_future`), matching the dashboard's existing "No same-format team" affordance — and assert each of the three cases in tests/integration/test_scrim_detail.py per FR-012 (missing)
+- [X] T041 Show the listing's posting age (e.g. "posted 2 days ago") on the detail page in app/templates/scrim_detail.html, keeping the absolute UTC timestamp as secondary detail, with coverage in tests/integration/test_scrim_detail.py per FR-009 (partial)
+- [X] T042 Reconcile the dashboard's format filter (app/templates/scrims.html filter form + the `?format=` argument in app/routes/scrims.py `index()`) with the spec's "Out of scope: filtering/search on the dashboard beyond the default soonest-first ordering" — either bring the spec's scope statement in line with contracts/dashboard-routes.md, which sanctions the filter, or remove the filter and the `?format=` handling (the `/scrims/listings` redirect must keep preserving the argument either way) per spec Assumptions / contracts/dashboard-routes.md (unrequested)
+- [X] T043 Use one compact UTC time format (`YYYY-MM-DD HH:MM`) across every scrims surface — the "My matches & listings" and "Proposals" rail items in app/templates/scrims.html and the scheduled/posted times in app/templates/scrim_detail.html currently print raw ISO strings with a `+00:00` offset next to the listings table's compact times; add a shared Jinja filter or template macro rather than repeating the slice per FR-002, FR-007 (partial)
+
+---
+
+## Phase 10: Convergence
+
+**Added 2026-07-27** by a second `/speckit-converge` pass after T040–T043 shipped. The four Phase 9
+findings are closed and covered by tests (full suite: 198 passed). This pass additionally verified
+the RGL client's timeout/outcome mapping, the roster cache's stale-if-error behavior, the
+login + RGL-link gate on every scrims route, and the research §7 layout CSS — all conform. One
+low-severity item remains.
+
+- [X] T044 Update the post-seed walkthrough printed by scripts/seed_demo_team.py so it points at the merged dashboard: `/scrims` is where both the demo team's open listing is claimed and its incoming proposal is answered — the script still tells testers to claim at `/scrims/listings` (which only survives as a 302) and describes `/scrims` as the proposals page per research §4 / FR-004, FR-007 (partial)
+
+---
+
+## Phase 11: Post-Implementation UI Adjustments (user feedback, 2026-07-27)
+
+**Purpose**: Scrim times read as `2026-07-29 01:52` — precise but hard to scan, and in a timezone
+nobody schedules in. Decision record in research.md §10; spec clarification + FR-002/FR-009
+updated to match.
+
+- [X] T045 Render every scrim time in the viewer's own timezone: add `pretty_utc` / `local_dt` Jinja filters to app/timefmt.py (readable UTC text inside `<time class="ts" datetime="…">`), a `toLocaleString` rewrite script in app/templates/base.html, and switch app/templates/scrims.html + scrim_detail.html to `| local_dt` (drop the "(UTC)" column/label suffixes); update tests/unit/test_timefmt.py and the format assertions in tests/integration/test_dashboard.py + test_scrim_detail.py to assert the `<time>` wrapper and the `Jul 29 1:52 AM UTC` fallback
+- [X] T046 Keep localized times on one line in the listings table (`.table time.ts { white-space: nowrap }` in app/static/css/app.css) so `Jul 28 8:52 PM CDT` doesn't wrap the zone onto a second row; listings table still fits its panel with no horizontal scrolling (FR-002)
+
+---
+
+## Phase 12: Convergence
+
+**Added 2026-07-27** by a third `/speckit-converge` pass, after Phase 11's viewer-local times and
+the constitution's amendment to v3.0.0. Every FR/SC traces to implementing code and the suite is
+green (202 passed). Constitution re-checked against v3.0.0: no violations — and the Principle I
+deviation recorded in plan.md no longer applies, since scrim scheduling is now the core loop
+rather than work outside it. One low-severity consistency item remains.
+
+- [X] T047 Render the RGL link's "Last refreshed" stamp in app/templates/account.html through the shared `| local_dt` filter instead of printing the raw ISO string with a hand-written "(UTC)" suffix — it is the only timestamp left in the app that formats itself, so it shows `2026-07-27T21:04:36+00:00` where every scrims screen now shows `Jul 27 4:04 PM CDT` per research §10 (partial)

@@ -1,28 +1,34 @@
 # TF2 Server Hosting
 
-A paid, self-service platform for **competitive Team Fortress 2 teams to rent a
-dedicated game server for a season**, running on Irulast's bare-metal `mke`
-Kubernetes cluster.
+A **free scrim scheduling platform for competitive Team Fortress 2 teams**, with paid
+dedicated game servers attached to the scrims they schedule, running on Irulast's
+bare-metal `mke` Kubernetes cluster.
 
-A team captain signs in with **Steam** and **requests a server**; the operator handles
-payment out-of-band and approves it. Within about a minute they get a publicly-joinable
-TF2 server they own for the season — share the address with players, change the map, kick
-players, run admin commands, all over RCON. When the term ends the server suspends, keeps
-its config through a grace period for renewal, then is deleted and its resources reclaimed.
+A player signs in with **Steam**, links their **RGL** account, and gets the whole scrim
+surface for nothing: browse every open listing in the league, post their own, propose a
+match to any team in their format's current season, claim someone else's, check the
+opposing roster, and track who on their team is actually showing up. When a team wants
+somewhere to play, they pay the operator out-of-band and the operator approves an
+entitlement — a **per-scrim server** spun up for that match and torn down after it, or a
+**season-long rented server** they own and configure for the term. Granted servers are
+publicly joinable and managed over RCON from the web console.
 
-> **Status:** early build. Feature `001-basic-flask-app` (a navigable UI shell with
-> placeholder data) is implemented; Steam auth and season-pass billing are the next
-> features. Driven by [GitHub Spec Kit](https://github.com/github/spec-kit).
+> **Status:** early build. Implemented: `001-basic-flask-app` (UI shell),
+> `002-steam-sign-in`, `003-link-rgl-account` (RGL linking + scrim scheduling), and
+> `004-scrims-dashboard` (combined dashboard, rosters, attendance, division browser).
+> Server provisioning — the paid half — is **not built yet**; it is the next feature.
+> Driven by [GitHub Spec Kit](https://github.com/github/spec-kit).
 
 ## Scope of the first version
 
-**A paid product for small competitive teams.** The core loop: *sign in with Steam →
-request a server → operator approves (payment handled out-of-band) → a real, joinable,
-RCON-manageable server on `mke` → auto-expire at term end.* The buyer is an individual
-owner (the captain). Explicitly **out of scope for now:** in-app/automated payment
-processing, recurring/hourly billing, multi-member team accounts, a free tier, SLAs,
-multi-region, non-TF2 games. DDoS resilience and Steam GSLT for public listing **are** in
-scope since servers are publicly reachable (see the constitution).
+**Free to schedule, paid to play on.** The core loop: *sign in with Steam → link RGL →
+find or arrange a scrim (free) → optionally pay the operator out-of-band → the operator
+approves an entitlement → a real, joinable, RCON-manageable server on `mke`, bound to that
+scrim and reclaimed when it ends.* Team authority comes from RGL membership; the owner of a
+granted server is the individual captain. Explicitly **out of scope for now:** in-app or
+automated payment processing, recurring/hourly billing, in-app role hierarchies beyond RGL
+membership, SLAs, multi-region, non-TF2 games. DDoS resilience and Steam GSLT for public
+listing **are** in scope since servers are publicly reachable (see the constitution).
 
 ## Key decisions already made
 

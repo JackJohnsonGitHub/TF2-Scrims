@@ -10,7 +10,7 @@ never trusted (003 FR-016 pattern).
 |---|---|---|---|
 | GET | `/scrims` | **Combined dashboard**: all-format open *future* listings (soonest first, own-team rows flagged, inline claim) + my-scrims summary (incoming/outgoing pending, upcoming confirmed) + top-right create/propose actions + empty state. Optional `?format=` filter on the listings section. Layout (research §7): main column = open listings (compact 4-column table, notes/division as sub-lines, no horizontal scroll) then "My matches & listings"; right rail = "Proposals". | FR-001..FR-007 |
 | GET | `/scrims/listings` | **302 → `/scrims`** (preserving `?format=`). Old bookmarks/links keep working; page is merged. | research §4 |
-| GET | `/scrims/<id>` | **Listing detail**: team, format, division, time, posting age, notes; posting team's roster (cached RGL fetch, stale/absent tolerated); claim form when eligible; attendance tracker when viewer is on the posting team. Visibility per research §6, else 404. | FR-009..FR-013 |
+| GET | `/scrims/<id>` | **Listing detail**: team, format, division, time, posting age, notes; posting team's roster (cached RGL fetch, stale/absent tolerated); claim form — or the reason it is unavailable — when the viewer may act; attendance tracker when viewer is on the posting team. Visibility per FR-022 / research §6: open future listing → any RGL-linked user; claimed/cancelled/past/proposal-origin → participating team members only; everyone else 404. | FR-009..FR-013, FR-022 |
 | GET | `/scrims/listings/new` | **Post-a-listing page**: the create-listing form (moved off the dashboard per user UI feedback); submits to the existing `POST /scrims/listings/new`. | FR-004 |
 | POST | `/scrims/<id>/attendance` | Upsert one player's status. Form: `player_steam_id`, `status` ∈ `attending` \| `not_attending` \| `unconfirmed`. Self-marking for posting-team members; any player for the listing creator. Redirects back to the detail page. | FR-014..FR-016 |
 
@@ -28,7 +28,8 @@ detail page link into them. `claim` additionally rejects expired listings (contr
   available"). Expired rows are retained (never deleted).
 - **Dashboard sections (FR-002/FR-005/FR-007)**: listings section shows team name/tag, format,
   division, scheduled time for every open future listing across formats, ordered by
-  `scheduled_at`; the viewer's own teams' listings are visually flagged and carry **no** claim
+  `scheduled_at` and rendered in the viewer's own timezone with the zone named (FR-002; UTC,
+  labelled, is the no-JavaScript fallback); the viewer's own teams' listings are visually flagged and carry **no** claim
   affordance; the my-scrims summary reuses 003's incoming/outgoing/upcoming queries and action
   buttons.
 - **Roster on detail (FR-010/FR-011)**: if the team's roster stamp is missing/older than the TTL,
@@ -57,6 +58,10 @@ detail page link into them. `claim` additionally rejects expired listings (contr
 - `GET /scrims/<id>` (open future listing, any linked user) → 200 with team info + mocked roster
   names; RGL fetch failure with warm cache → 200 with cached names; failure with cold cache → 200
   with "roster unavailable" notice. Non-member on a confirmed scrim's detail → 404.
+- `GET /scrims/<id>` for a viewer who cannot claim → 200 stating **why** rather than silently
+  omitting the claim form (FR-012): the listing belongs to one of the viewer's own teams, the
+  viewer has no team of the listing's format, or the listing is no longer open (claimed,
+  cancelled, or past its scheduled time) — one assertion per case.
 - `POST /scrims/<id>/attendance` as posting-team member for own steam id → 303/302, row upserted,
   tally reflects it on reload; as member for a *teammate's* id → 403 (unless creator); as creator
   for any roster/departed id → success; as opponent-team member or non-member → 403; after

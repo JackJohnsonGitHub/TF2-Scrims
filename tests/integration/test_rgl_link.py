@@ -1,4 +1,6 @@
 """Integration tests for the RGL link flow (contracts/rgl-routes.md) — RGL mocked."""
+import re
+
 from tests.conftest import rgl_team
 
 
@@ -32,6 +34,24 @@ def test_link_with_teams_shows_them_by_format(app, client, login, mock_rgl):
     assert "froyotech" in body and "Highlander Heroes" in body
     assert "Sixes" in body and "Highlander" in body
     assert "Verified" in body
+
+
+def test_account_last_refreshed_is_localizable(app, client, login, mock_rgl):
+    """The refresh stamp goes through the shared filter like every other time in
+    the app: readable UTC text in a <time> the shell script rewrites (FR-002),
+    not a raw ISO string with a hand-written zone suffix."""
+    login()
+    mock_rgl(name="b4nny", teams=[rgl_team(101, "froyotech", "FRG", "sixes")])
+    client.post("/rgl/link")
+
+    body = client.get("/account").get_data(as_text=True)
+    assert "Last refreshed:" in body
+    stamps = re.findall(r'<time class="ts" datetime="([^"]+)">([^<]+)</time>', body)
+    assert len(stamps) == 1
+    iso, text = stamps[0]
+    assert "+00:00" in iso
+    assert re.fullmatch(r"[A-Z][a-z]{2} \d{2} \d{1,2}:\d{2} [AP]M UTC", text), text
+    assert "(UTC)" not in body  # the zone name travels with the value now
 
 
 def test_link_profile_without_teams_is_no_team(app, client, login, mock_rgl):

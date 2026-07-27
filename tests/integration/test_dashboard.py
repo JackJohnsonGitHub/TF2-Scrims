@@ -1,6 +1,7 @@
 """Integration tests for the combined scrims dashboard (feature 004,
 contracts/dashboard-routes.md): open listings + my-scrims on one page, query-time
 expiry, own-team flagging, empty state, and the /scrims/listings redirect."""
+import re
 from datetime import datetime, timedelta, timezone
 
 from tests.conftest import rgl_team
@@ -51,6 +52,29 @@ def test_combined_page_shows_listings_and_my_scrims(app, client, link_team):
     assert "Alpha" in body                    # Alpha's listing visible to Bravo
     assert "Incoming proposals" in body       # my-scrims summary on the same page
     assert "Claim" in body                    # eligible claim control inline
+
+
+def test_all_dashboard_times_are_localizable(app, client, link_team):
+    """Listings table, rail items and summaries share one format: readable UTC
+    text wrapped in a <time> the shell script localizes (FR-002/FR-007)."""
+    link_team(A, [TEAM_A], persona="CaptainA")
+    link_team(B, [TEAM_B], persona="CaptainB")
+    as_user(client, A)
+    post_listing(client)                       # open listing in the main column
+    client.post("/scrims/propose", data={      # proposal in the side rail
+        "proposer_team_id": "101", "opponent_team_id": "202",
+        "scheduled_at": future_form()})
+
+    as_user(client, B)
+    body = client.get("/scrims").get_data(as_text=True)
+    # every timestamp is a <time class="ts"> the browser can rewrite...
+    stamps = re.findall(r'<time class="ts" datetime="([^"]+)">([^<]+)</time>', body)
+    assert len(stamps) >= 2  # Alpha's listing row + the incoming proposal rail item
+    # ...and each one's fallback text is human-readable UTC, never a raw ISO string
+    for iso, text in stamps:
+        assert "+00:00" in iso
+        assert re.fullmatch(r"[A-Z][a-z]{2} \d{2} \d{1,2}:\d{2} [AP]M UTC", text), text
+    assert "time.ts" in body  # the localizing script ships with the page
 
 
 def test_listings_ordered_soonest_first(app, client, link_team):

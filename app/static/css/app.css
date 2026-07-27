@@ -66,8 +66,8 @@ h2 { font-size: 19px; }
 .page-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 
 /* stats */
-.stat-row { display: flex; gap: 16px; margin: 20px 0; }
-.stat { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 20px; min-width: 96px; }
+.stat-row { display: flex; flex-wrap: wrap; gap: 16px; margin: 20px 0; }
+.stat { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 20px; min-width: 96px; }
 .stat-num { display: block; font-size: 28px; font-weight: 700; }
 .stat-label { color: var(--muted); font-size: 13px; }
 
@@ -75,21 +75,23 @@ h2 { font-size: 19px; }
 .card-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; margin: 16px 0; }
 .card { display: block; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px; color: var(--ink); }
 .card:hover { border-color: var(--accent); text-decoration: none; }
-.card h2 { margin: 0 0 6px; }
-.card p { margin: 0; color: var(--muted); }
+.card h2 { margin: 0 0 6px; font-size: 17px; }  /* h1 26 > section 19 > card 17 */
+.card p { margin: 0 0 6px; color: var(--muted); }
+.card p:last-child { margin-bottom: 0; }
 .card-accent { border-color: var(--accent); }
 
 /* mini list */
-.mini-list { list-style: none; padding: 0; }
-.mini-list li { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.mini-list { list-style: none; padding: 0; margin: 0; }
+.mini-list li { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.mini-list li:last-child { border-bottom: 0; }
 
 /* table */
 .table { width: 100%; border-collapse: collapse; margin-top: 16px; }
 .table th, .table td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); }
 .table th { color: var(--muted); font-weight: 600; font-size: 13px; text-transform: uppercase; letter-spacing: .03em; }
 
-/* badges */
-.badge { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+/* badges — a bare .badge must look like a chip on its own, not floating bold text */
+.badge { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; background: var(--panel-2); color: var(--muted); }
 .badge-on { background: rgba(63,185,80,.15); color: var(--on); }
 .badge-off { background: rgba(107,114,128,.2); color: var(--off); }
 .badge-demo { background: rgba(224,123,57,.18); color: var(--accent); border: 1px solid var(--accent); letter-spacing: .04em; }
@@ -108,12 +110,24 @@ h2 { font-size: 19px; }
 .btn-primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
 .btn-primary:hover { filter: brightness(1.07); border-color: var(--accent); }
 
-/* forms */
+/* forms — every control shares one look, including <select>, which otherwise
+   renders as a native white widget against the dark theme */
 .form { max-width: 440px; }
 .field { display: block; margin-bottom: 16px; }
-.field > span { display: block; margin-bottom: 6px; font-size: 14px; }
-.field input { width: 100%; padding: 9px 11px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); }
-.field input:focus { outline: none; border-color: var(--accent); }
+.field > span, .field > label { display: block; margin-bottom: 6px; font-size: 14px; }
+.field input, .field select, .filter select, .table select {
+  padding: 9px 11px; border-radius: 8px; border: 1px solid var(--line);
+  background: var(--panel); color: var(--ink); font: inherit;
+}
+.field input, .field select { width: 100%; }
+.table select { padding: 6px 9px; font-size: 13px; }
+.field input:focus, .field select:focus, .filter select:focus, .table select:focus {
+  outline: none; border-color: var(--accent);
+}
+
+/* inline filter above a list */
+.filter { display: flex; align-items: center; gap: 10px; margin: 4px 0 14px; }
+.filter label { color: var(--muted); font-size: 13px; }
 .err { color: var(--err); display: block; margin-top: 4px; }
 .form-actions { display: flex; align-items: center; gap: 12px; }
 
@@ -126,18 +140,39 @@ h2 { font-size: 19px; }
 .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 20px; }
 @media (max-width: 760px) { .two-col { grid-template-columns: 1fr; } }
 
-/* scrims dashboard: wide open-listings column + right rail */
-body[data-screen="scrims"] .content { max-width: 1200px; }
-.scrims-cols { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 20px; align-items: start; margin-top: 20px; }
-.scrims-cols .col { display: grid; gap: 20px; align-content: start; }
-.scrims-cols .card { overflow-x: auto; } /* safety net only — the listings table is compact enough to fit */
-@media (max-width: 900px) { .scrims-cols { grid-template-columns: 1fr; } }
+/* Two-column screens (home + scrims): one grid system, two widths.
+   `.cols` = wide main column with a rail on the right (scrims);
+   `.cols-side-left` = narrow box on the left, content to its right (home). */
+body[data-screen="scrims"] .content,
+body[data-screen="dashboard"] .content { max-width: 1200px; }
+.cols { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 20px; align-items: start; margin-top: 20px; }
+.cols-side-left { grid-template-columns: minmax(0, 250px) minmax(0, 1fr); }
+.col-main, .col-side { display: grid; gap: 20px; align-content: start; }
+.col-main > .card, .col-side > .card { overflow-x: auto; } /* safety net; tables are compact enough to fit */
+@media (max-width: 900px) {
+  .cols, .cols-side-left { grid-template-columns: 1fr; }
+  .col-side { order: 2; }   /* content leads when stacked; the side box follows */
+  .col-main { order: 1; }
+}
+
 .cell-sub { display: block; color: var(--muted); font-size: 13px; }
+.nowrap { white-space: nowrap; }  /* e.g. "RGL-Amateur" must not break at the hyphen */
+/* Localized times ("Jul 28 8:52 PM CDT") stay on one line in table cells. */
+.table time.ts { white-space: nowrap; }
 .card h3 { margin: 16px 0 6px; font-size: 14px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
 .card h3:first-of-type { margin-top: 8px; }
+
+/* Stacked list item: a title line, then one muted meta line under it. */
 .rail-item { padding: 10px 0; border-top: 1px solid var(--line); }
 .rail-item:first-child { border-top: 0; padding-top: 2px; }
-.rail-item .muted { display: block; margin: 2px 0 6px; }
+.rail-meta { display: block; color: var(--muted); margin: 2px 0 6px; }
+
+/* Label/value pairs (listing detail). Without this a <dl> falls back to the
+   browser default: value indented on its own line, twice the height it needs. */
+.meta { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 18px; margin: 14px 0 0; }
+.meta dt { color: var(--muted); font-size: 13px; }
+.meta dd { margin: 0; }
+@media (max-width: 560px) { .meta { grid-template-columns: 1fr; gap: 2px; } .meta dd { margin-bottom: 8px; } }
 .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px; }
 .panel h2 { margin-top: 0; }
 

@@ -1,6 +1,22 @@
 """Integration smoke tests for the app shell. Owner-only screens now require sign-in
-(feature 002), so those tests use the `login` fixture. Fixtures live in tests/conftest.py."""
-from app.models import SAMPLE_SERVERS
+(feature 002), so those tests use the `login` fixture. Fixtures live in tests/conftest.py.
+
+The "/" dashboard leads with scrims (constitution v3.0.0, Principle I): scheduling is
+the free core loop, so the home page opens on the viewer's scrim picture and keeps the
+placeholder server content below it.
+"""
+from datetime import datetime, timedelta, timezone
+
+from app.models import DEMO_TEAM_ID, SAMPLE_SERVERS
+from tests.conftest import rgl_team
+
+
+def on_server_team(login, link_team):
+    """Sign in as someone on the RGL team the sample servers are bound to — the
+    only people who may see or join them (constitution VIII)."""
+    steam_id = login()
+    link_team(steam_id, [rgl_team(DEMO_TEAM_ID, "Server Owners", "SRV", "sixes")])
+    return steam_id
 
 
 def test_healthz(client):
@@ -37,8 +53,8 @@ def test_create_server_form_renders(client, login):
     assert b'name="max_slots"' in resp.data
 
 
-def test_server_detail_renders(client, login):
-    login()
+def test_server_detail_renders(client, login, link_team):
+    on_server_team(login, link_team)
     resp = client.get(f"/servers/{SAMPLE_SERVERS[0].id}")
     assert resp.status_code == 200
     assert b'data-screen="server-detail"' in resp.data
@@ -46,10 +62,48 @@ def test_server_detail_renders(client, login):
     assert b"Admin console" in resp.data
 
 
-def test_demo_servers_are_tagged(client, login):
-    login()
+def test_demo_servers_are_tagged(client, login, link_team):
+    on_server_team(login, link_team)
     assert b">DEMO<" in client.get("/servers").data
     assert b">DEMO<" in client.get(f"/servers/{SAMPLE_SERVERS[0].id}").data
+
+
+# --- Server access: you see only what your own team can join (constitution VIII) ---
+
+def test_servers_of_another_team_are_hidden_from_lists(client, login, link_team):
+    """A user on some other RGL team sees none of that team's servers, on either
+    the home dashboard or the servers list."""
+    steam_id = login()
+    link_team(steam_id, [rgl_team(4242, "Some Other Team", "OTH", "sixes")])
+
+    home = client.get("/").get_data(as_text=True)
+    servers = client.get("/servers").get_data(as_text=True)
+    for name in (SAMPLE_SERVERS[0].name, SAMPLE_SERVERS[1].name):
+        assert name not in home
+        assert name not in servers
+    assert "No servers yet" in servers          # honest empty state, not a filtered table
+    assert "Recent servers" not in home
+
+
+def test_unlinked_user_sees_no_servers(client, login):
+    """No RGL team at all means no server is yours — and the page still renders."""
+    login()
+    body = client.get("/").get_data(as_text=True)
+    assert body.count(SAMPLE_SERVERS[0].name) == 0
+    assert client.get("/servers").status_code == 200
+
+
+def test_another_teams_server_is_404_not_403(client, login, link_team):
+    """Detail, settings and RCON are all indistinguishable from a nonexistent
+    server — being told "forbidden" would confirm the server exists."""
+    steam_id = login()
+    link_team(steam_id, [rgl_team(4242, "Some Other Team", "OTH", "sixes")])
+    sid = SAMPLE_SERVERS[0].id
+
+    assert client.get(f"/servers/{sid}").status_code == 404
+    assert client.post(f"/servers/{sid}/console", data={"command": "status"}).status_code == 404
+    assert client.post(f"/servers/{sid}/settings", data={
+        "name": "X", "map": "cp_x", "max_slots": "24"}).status_code == 404
 
 
 def test_unknown_path_is_404(client):
@@ -70,9 +124,144 @@ def test_create_validation_rejects_bad_slots(client, login):
     assert b"Max slots must be between" in resp.data
 
 
-def test_console_echoes_command(client, login):
-    login()
+def test_console_echoes_command(client, login, link_team):
+    on_server_team(login, link_team)
     resp = client.post(f"/servers/{SAMPLE_SERVERS[0].id}/console", data={"command": "status"})
     assert resp.status_code == 200
     assert b"status" in resp.data
     assert b"Placeholder response" in resp.data
+
+
+# --- Scrims lead the home dashboard (constitution v3.0.0, Principles I & VIII) ---
+
+A = "76561198000000001"  # on Alpha, sixes
+B = "76561198000000002"  # on Bravo, sixes
+C = "76561198000000003"  # on Charlie, sixes
+
+TEAM_A = rgl_team(101, "Alpha", "ALP", "sixes")
+TEAM_B = rgl_team(202, "Bravo", "BRV", "sixes")
+TEAM_C = rgl_team(303, "Charlie", "CHA", "sixes")
+
+
+def as_user(client, steam_id):
+    with client.session_transaction() as sess:
+        sess["steam_id"] = steam_id
+
+
+def future_iso(days=3):
+    return (datetime.now(timezone.utc) + timedelta(days=days)).isoformat(timespec="seconds")
+
+
+def test_home_shows_linked_users_scrim_picture(app, client, link_team):
+    """A linked user's confirmed match, the proposal waiting on them, and a listing
+    they could claim all land on "/" — no detour through /scrims."""
+    link_team(A, [TEAM_A], persona="CaptainA")
+    link_team(B, [TEAM_B], persona="CaptainB")
+    link_team(C, [TEAM_C], persona="CaptainC")
+    with app.test_request_context():
+        from app.scrims import accept, create_listing, create_proposal
+        accept(B, create_proposal(A, 101, 202, future_iso(2)))  # Alpha vs Bravo, confirmed
+        create_proposal(B, 202, 101, future_iso(4))             # Bravo → Alpha, pending
+        create_listing(C, 303, future_iso(6))                   # Charlie's open listing
+    as_user(client, A)
+
+    body = client.get("/").get_data(as_text=True)
+    assert 'data-screen="dashboard"' in body
+    assert "Upcoming matches" in body and "Alpha" in body and "Bravo" in body
+    assert "Proposals waiting on you" in body and "Accept" in body
+    assert "Open listings you can claim" in body and "Charlie" in body
+    assert '<time class="ts"' in body            # every stamp goes through local_dt
+    assert "Sixes" in body                       # format_labels, not the raw key
+    assert 'href="/scrims"' in body              # "View all scrims"
+    # servers are a small side box now, not a section under the scrims
+    assert "Your servers" in body and '"/servers/new"' in body
+    assert "Recent servers" not in body
+
+
+def test_acting_on_a_scrim_returns_to_the_page_you_acted_from(app, client, link_team):
+    """Accept/decline from the home dashboard leaves you on the home dashboard —
+    being bounced to /scrims loses your place."""
+    link_team(A, [TEAM_A], persona="CaptainA")
+    link_team(B, [TEAM_B], persona="CaptainB")
+    with app.test_request_context():
+        from app.scrims import create_proposal
+        scrim_id = create_proposal(B, 202, 101, future_iso(4))  # Bravo → Alpha, pending
+    as_user(client, A)
+
+    assert 'name="next" value="/"' in client.get("/").get_data(as_text=True)
+    resp = client.post(f"/scrims/{scrim_id}/accept", data={"next": "/"})
+    assert resp.status_code == 302
+    assert resp.headers["Location"].endswith("/")
+    assert not resp.headers["Location"].endswith("/scrims")
+
+
+def test_scrim_action_without_a_next_still_lands_on_the_dashboard(app, client, link_team):
+    link_team(A, [TEAM_A], persona="CaptainA")
+    link_team(B, [TEAM_B], persona="CaptainB")
+    with app.test_request_context():
+        from app.scrims import create_proposal
+        scrim_id = create_proposal(B, 202, 101, future_iso(4))
+    as_user(client, A)
+
+    resp = client.post(f"/scrims/{scrim_id}/decline")
+    assert resp.headers["Location"].endswith("/scrims")
+
+
+def test_forged_next_cannot_redirect_off_site(app, client, link_team):
+    """`next` is attacker-reachable, so an off-site target must fall back to the
+    scrims dashboard rather than becoming an open redirect."""
+    link_team(A, [TEAM_A], persona="CaptainA")
+    link_team(B, [TEAM_B], persona="CaptainB")
+    with app.test_request_context():
+        from app.scrims import create_proposal
+        scrim_id = create_proposal(B, 202, 101, future_iso(4))
+    as_user(client, A)
+
+    resp = client.post(f"/scrims/{scrim_id}/accept", data={"next": "https://evil.example/pwn"})
+    assert resp.status_code == 302
+    assert "evil.example" not in resp.headers["Location"]
+    assert resp.headers["Location"].endswith("/scrims")
+
+
+def test_home_empty_state_when_nothing_scheduled(app, client, link_team):
+    link_team(A, [TEAM_A], persona="CaptainA")
+    as_user(client, A)
+
+    resp = client.get("/")
+    assert resp.status_code == 200
+    body = resp.get_data(as_text=True)
+    assert "No scrims scheduled yet" in body
+    assert '"/scrims/listings/new"' in body  # post a listing
+    assert '"/scrims/new"' in body           # or propose a scrim
+
+
+def test_home_open_listing_preview_is_capped(app, client, link_team):
+    link_team(A, [TEAM_A], persona="CaptainA")
+    link_team(C, [TEAM_C], persona="CaptainC")
+    with app.test_request_context():
+        from app.scrims import create_listing
+        for day in range(1, 8):  # seven claimable listings
+            create_listing(C, 303, future_iso(day))
+    as_user(client, A)
+
+    body = client.get("/").get_data(as_text=True)
+    assert body.count(">Charlie<") == 5      # preview caps the rows...
+    assert "View all scrims" in body         # ...and points at the full page
+
+
+def test_home_prompts_unlinked_user_to_link_rgl(client, login):
+    """The home page is never rgl_link_required: an unlinked user still gets a
+    page (not a redirect, not a crash) with the way forward on it."""
+    login()
+    resp = client.get("/")
+    assert resp.status_code == 200
+    body = resp.get_data(as_text=True)
+    assert 'data-screen="dashboard"' in body
+    assert "RGL" in body and '"/account"' in body
+    assert "Upcoming matches" not in body  # no scrim sections without a team
+
+
+def test_home_anonymous_still_gets_the_landing_page(client):
+    body = client.get("/").get_data(as_text=True)
+    assert 'data-screen="landing"' in body
+    assert "Upcoming matches" not in body

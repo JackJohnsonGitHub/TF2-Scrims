@@ -17,7 +17,9 @@ Validation guide for feature 004. See [data-model.md](./data-model.md) for table
 ```bash
 python3 -m pytest tests/ -q                      # full suite
 python3 -m pytest tests/unit/test_attendance.py tests/unit/test_rgl_roster.py \
-                  tests/integration/test_dashboard.py tests/integration/test_scrim_detail.py -q
+                  tests/unit/test_rgl_season.py tests/unit/test_timefmt.py \
+                  tests/integration/test_dashboard.py tests/integration/test_scrim_detail.py \
+                  tests/integration/test_propose_discovery.py -q
 ```
 
 Expected: all green; RGL is mocked (no network). The 003 suites must stay green — the dashboard
@@ -32,6 +34,12 @@ merge and expiry filter change routes/queries 003's tests already cover.
    right rail shows **Proposals** with your incoming demo proposal. **＋ New listing** (opens its
    own page) and **Propose a scrim** sit top-right.
    - Old URL check: visiting `/scrims/listings` redirects to `/scrims`.
+   - **Viewer-local times (FR-002/FR-009)**: every scrim time — listings table, "My matches &
+     listings", the Proposals rail, the detail page — reads as month, day, 12-hour clock and the
+     zone *you* are in (`Jul 28 8:52 PM CDT`), never a bare number and never another region's
+     clock. Re-run with the machine's timezone changed and the same listing shifts accordingly.
+     Then disable JavaScript and reload: the identical times still render, as labelled UTC
+     (`Jul 29 1:52 AM UTC`) — a time is never shown without a zone.
 2. **Auto-expiry (US1)** — Post a listing ~2 minutes out, wait past its time, reload `/scrims`:
    it's gone from both sections (and its detail page rejects claims). DB row still exists
    (`status` unchanged — read-side expiry).
@@ -62,6 +70,7 @@ merge and expiry filter change routes/queries 003's tests already cover.
 | Criterion | Check |
 |---|---|
 | SC-001 | Header → dashboard is one click; every listing row shows team/format/time; my-scrims on same page. |
+| SC-001 (times) | Step 1 — every time reads in the viewer's own zone with the zone named; with JavaScript off the same time renders as labelled UTC. |
 | SC-002 | Step 2 — expired listing invisible with no manual action. |
 | SC-003 | Top-right actions land on the 003 create/propose flows in one click. |
 | SC-004 | Step 3 — roster renders; RGL-down path shows notice, never an error page. |

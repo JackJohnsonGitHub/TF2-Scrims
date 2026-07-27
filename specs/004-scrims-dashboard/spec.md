@@ -4,7 +4,7 @@
 
 **Created**: 2026-07-23
 
-**Status**: Draft
+**Status**: Implemented — all 47 tasks complete through three convergence passes (tasks.md)
 
 **Input**: User description: "This new Feature will be the Scrims feature. This Will involve The logged in user to Click the scrims Icon seen in the header. Clicking that will bring you the scrims open listing dashboard. This will show all the scrims that people have requested. Past listings will be auto removed. At the top right should be the ability to create a listing or propose a listing to a specific team. When you click on a listing It gives you the ability to see the people on the team. if its your own team's listing you should be able to have an attendance tracker."
 
@@ -34,7 +34,8 @@
 - Q: How much detail per dashboard listing row? (post-implementation UI feedback) → A: Compact
   rows — notes and division render as secondary lines beneath the team and format, times show as
   compact UTC (date + hh:mm), and the listings table must fit its panel with no horizontal
-  scrolling.
+  scrolling. — *time format superseded 2026-07-27 by viewer-local rendering, see the last entry in
+  this session; the compact-row and no-horizontal-scroll parts still hold.*
 - Q: When browsing RGL teams by division in the propose flow, which teams are listed? → A: The
   current RGL season's divisions and teams for the **same format** as the selected proposing team
   only — every listed team is a legal opponent (same-format rule, 003 FR-012).
@@ -45,6 +46,36 @@
 - Q: Where does the division browser live — and does the current opponent dropdown stay? → A: In
   the propose form: a division selector loads that division's teams to pick as opponent; the
   existing quick dropdown of already-known (on-platform) teams stays as a fast path.
+- Q: `2026-07-29 01:52` is hard to read — what should scrim times look like? (post-implementation
+  UI feedback, 2026-07-27) → A: Month, day, 12-hour clock and zone name (`Jul 28 8:52 PM CDT`),
+  rendered in **each viewer's own timezone** rather than one fixed zone, so a captain in Seattle
+  and one in Frankfurt each read their own clock for the same instant. UTC (labelled) is the
+  fallback when the viewer's zone is unknown.
+
+### Session 2026-07-27 — post-analysis refinements
+
+Not user Q&A: these are spec corrections raised by `/speckit-analyze` and folded back in, so the
+spec matches the behavior the design and the shipped feature actually commit to.
+
+- **Detail-page visibility was undocumented** (was design-only, research §6): who may open a
+  listing detail page — and that everyone else gets "not found" — is user-observable behavior, so
+  it is now stated as **FR-022** instead of living only in the plan.
+- **FR-012's ineligibility messaging was untestable**: "ineligible users see why they cannot" is
+  now an explicit MUST with the three named reasons. *(This clause has no implementation yet — the
+  detail page currently just hides the claim control.)*
+- **SC-006 was unachievable as written**: finding any league team in ~30 seconds holds once the
+  division directory for that season is loaded; the criterion now separates first-use from
+  steady-state instead of promising the steady-state number unconditionally.
+- **SC-005 was a stopwatch metric**: restated as the verifiable property behind it (one action per
+  player, no navigation, tally always consistent, never visible outside the team).
+- **Roster leader indication** (already designed and shipped) is now authorized by FR-010.
+- Requirement sections reordered so FR numbering runs monotonically (attendance before opponent
+  discovery); no requirement text changed in the move.
+- **The dashboard's format filter was excluded by scope but shipped** (found by `/speckit-converge`,
+  task T042): the filter predates this feature — it came from 003's listings page and the merged
+  dashboard inherited it, with the `?format=` selection preserved across the old-URL redirect.
+  Rather than remove working behavior, FR-002 now requires it and the out-of-scope list narrows to
+  search and *other* filters.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -196,6 +227,9 @@ join to respond" messaging; confirm the quick dropdown still works.
 - **Listing expires while being viewed** — a user has the dashboard or a detail view open as the
   scheduled time passes; a claim attempted after expiry is rejected with a clear "no longer
   available" message.
+- **Detail link for a scrim that is no longer public** — a user follows a link (bookmark, shared
+  URL) to a listing that has since been claimed, cancelled, or expired: participants still see it;
+  anyone else is told it does not exist, not that it exists but is off-limits (FR-022).
 - **Signed-out visitor** — the Scrims area is for signed-in users; a signed-out visitor is asked to
   sign in first (consistent with the rest of the app's gating).
 - **Signed-in but not RGL-linked / no team** — the whole scrims area keeps feature 003's gate: the
@@ -229,8 +263,12 @@ join to respond" messaging; confirm the quick dropdown still works.
 - **FR-002**: The dashboard MUST list every currently open scrim listing across all teams and
   formats, showing at least the posting team (name/tag), format, division where known, and the
   scheduled date/time. Rows stay compact: division and notes render as secondary detail under
-  format and team, times show as compact UTC (date + hh:mm), and the listings table MUST fit its
-  panel without horizontal scrolling.
+  format and team, times render in **the viewer's own timezone with the zone named** (e.g.
+  `Jul 28 8:52 PM CDT`) so no one does mental arithmetic to read a scrim time, and the listings
+  table MUST fit its panel without horizontal scrolling. Where the viewer's timezone cannot be
+  determined, the same readable form MUST still render in UTC, labelled as such — a time is never
+  shown without a zone. The listings section MUST keep the format filter feature 003's listings
+  page offered, defaulting to all formats; no other filtering or search is added.
 - **FR-003**: Listings whose scheduled date/time has passed MUST be removed from the dashboard
   automatically — they MUST NOT appear in the open list and MUST NOT be claimable — without any
   manual action by users or the operator. The underlying record is retained (not deleted) for the
@@ -258,14 +296,35 @@ join to respond" messaging; confirm the quick dropdown still works.
 ### Functional Requirements — Listing detail & roster
 
 - **FR-009**: Clicking a listing on the dashboard MUST open a detail view showing the listing's
-  team, format, division where known, scheduled date/time, and posting age.
+  team, format, division where known, scheduled date/time (same timezone convention as FR-002),
+  and posting age.
 - **FR-010**: The detail view MUST show the roster of players currently on the listing's team, as
-  known to the league, each with their player name.
+  known to the league, each with their player name, and MUST indicate which players the league
+  records as team leaders where that is known.
 - **FR-011**: If roster information cannot be retrieved, the detail view MUST still render the
   listing's details with a clear, friendly notice in place of the roster — never an error page.
 - **FR-012**: An eligible user (per feature 003's rules) MUST be able to claim the listing from its
-  detail view; ineligible users see why they cannot (not signed-in to a same-format team, own
-  listing, or listing no longer open).
+  detail view. When the viewer is not eligible, the detail view MUST state the reason rather than
+  silently omitting the claim action — the reason being one of: the viewer has no team of the
+  listing's format, the listing belongs to one of the viewer's own teams, or the listing is no
+  longer open (claimed, cancelled, or past its scheduled time).
+Who may open a detail view at all is specified separately in FR-022.
+
+### Functional Requirements — Attendance tracker
+
+- **FR-013**: When the viewer is a member of the listing's team, the detail view MUST present the
+  roster as an attendance tracker: each player carries a status of attending, not attending, or
+  unconfirmed (the default).
+- **FR-014**: A member of the listing's team MUST be able to set their **own** attendance status;
+  the listing's **creator** MUST be able to set **any** roster player's status (covering players
+  without app accounts). No other user may change attendance. Each change MUST be persisted and
+  reflected to all team members viewing the listing.
+- **FR-015**: The tracker MUST show a tally of players marked attending against the number of
+  players the listing's format requires (Sixes 6, Prolander 7, Highlander 9).
+- **FR-016**: Attendance information MUST be visible and editable only to members of the listing's
+  team — never to other teams or in the general listing view.
+- **FR-017**: The attendance tracker MUST remain available to the team on that scrim after the
+  listing is claimed (confirmed), until the scheduled time passes.
 
 ### Functional Requirements — Opponent discovery (propose flow)
 
@@ -284,27 +343,19 @@ join to respond" messaging; confirm the quick dropdown still works.
   alongside the division browser; when the league cannot be reached, the browser MUST degrade to a
   friendly notice while the quick pick and the rest of the propose form keep working.
 
-### Functional Requirements — Attendance tracker
+### Functional Requirements — Detail-view visibility
 
-- **FR-013**: When the viewer is a member of the listing's team, the detail view MUST present the
-  roster as an attendance tracker: each player carries a status of attending, not attending, or
-  unconfirmed (the default).
-- **FR-014**: A member of the listing's team MUST be able to set their **own** attendance status;
-  the listing's **creator** MUST be able to set **any** roster player's status (covering players
-  without app accounts). No other user may change attendance. Each change MUST be persisted and
-  reflected to all team members viewing the listing.
-- **FR-015**: The tracker MUST show a tally of players marked attending against the number of
-  players the listing's format requires (Sixes 6, Prolander 7, Highlander 9).
-- **FR-016**: Attendance information MUST be visible and editable only to members of the listing's
-  team — never to other teams or in the general listing view.
-- **FR-017**: The attendance tracker MUST remain available to the team on that scrim after the
-  listing is claimed (confirmed), until the scheduled time passes.
+- **FR-022**: A listing's detail view MUST be reachable by any signed-in, RGL-linked user while the
+  listing is open and its scheduled time is still in the future — that is exactly what the
+  dashboard offers. Once a scrim is claimed, cancelled, or past, and for scrims that began as
+  directed proposals, the detail view MUST be restricted to members of the participating teams;
+  every other user MUST be told the scrim does not exist rather than shown its details or its
+  existence. The posting team keeps access throughout, which is what makes FR-017 possible.
 
 ### Key Entities *(include if feature involves data)*
 
 - **Scrim listing** *(existing, extended)*: an open scrim posted by a team (feature 003). Extended
-  behavior: expires automatically once its scheduled date/time passes — expired listings leave the
-  open pool and cannot be claimed, but remain on record.
+  behavior: it expires once its scheduled date/time passes, per FR-003.
 - **Team roster / roster player**: the players currently on an RGL team as known to the league —
   player name and league identity, independent of whether the player has ever signed in to the
   app. Sourced from the league, refreshable like other team data.
@@ -330,19 +381,22 @@ join to respond" messaging; confirm the quick dropdown still works.
   dashboard's top-right actions in a single click.
 - **SC-004**: A user can open any listing and see the posting team's current player list; when the
   league is unreachable, the listing still renders with a clear notice instead of an error.
-- **SC-005**: A listing creator can record attendance for any roster player (and a teammate their
-  own status) in under ~10 seconds per player, the confirmed tally always matches the marks, and
+- **SC-005**: Recording attendance takes one action per player from the listing's own view — a
+  creator marks any roster player and a teammate marks themselves without leaving the page or
+  hunting for another screen — the confirmed tally always matches the marks on record, and
   attendance is never visible to users outside the team.
-- **SC-006**: From the propose form, a captain can find and select any current-season same-format
-  RGL team — including one with no members on the platform — via the division selector in under
-  ~30 seconds, and the resulting proposal behaves exactly like any other pending proposal.
+- **SC-006**: Once the current season's division directory is loaded, a captain can find and select
+  any same-format RGL team — including one with no members on the platform — via the division
+  selector in under ~30 seconds, and the resulting proposal behaves exactly like any other pending
+  proposal. On first use for a season the directory is still filling: the browser MUST stay usable
+  throughout, showing what it has plus an honest indication of how much is still loading, and MUST
+  reach the steady state above without any operator action.
 
 ## Assumptions
 
-- **"Auto removed" means expired, not erased**: a listing whose scheduled time passes disappears
-  from the dashboard and becomes unclaimable automatically, but the record is kept (consistent with
-  feature 003's "cancelled, not silently deleted" approach) so teams retain their history and
-  attendance context.
+- **"Auto removed" means expired, not erased** (mechanics in FR-003): retention follows feature
+  003's "cancelled, not silently deleted" approach, so teams keep their history and the attendance
+  context attached to a past scrim.
 - **The dashboard shows all formats**: RGL-linked users browse listings across all formats, not
   just their own teams' formats; eligibility rules (same format, not your own team) continue to
   gate *acting* on a listing, exactly as feature 003 defined.
@@ -363,7 +417,8 @@ join to respond" messaging; confirm the quick dropdown still works.
   identity used everywhere else, so nothing changes for them when their members later join.
 - **Out of scope**: notifications/reminders about attendance or expiring listings; attendance
   tracking for directed proposals or for the opposing team; match results or history pages;
-  filtering/search on the dashboard beyond the default soonest-first ordering; searching teams by
+  search on the dashboard, or any filtering beyond the format filter carried over from feature
+  003 (ordering stays soonest-first); searching teams by
   name in the propose flow (browsing is by division in this phase); notifying off-platform teams
   about proposals (they discover them by joining); any server provisioning (unchanged from feature
   003 — scheduling never touches servers).

@@ -19,9 +19,9 @@
 
 ```
    Steam OpenID ◀──┐                 Operator (out-of-band payment)
-   (sign in)       │                        │ approves request
-                   │ HTTPS                  ▼
-        Browser (captain/owner) ───▶ [ server request ] ──▶ approval
+   api.rgl.gg   ◀──┤                        │ approves an entitlement
+   (sign in, link) │ HTTPS                  ▼
+        Browser (team member) ───▶ [ scrims — free ] ──▶ [ server entitlement — paid ]
             │  HTTPS
             ▼
    ┌─────────────────────┐    k8s python client  ┌──────────────────────┐
@@ -29,12 +29,12 @@
    │   (Python / Flask)  │                        └──────────────────────┘
    │                     │                          │ creates (only if approved)
    │  - REST API + web   │                          ▼
-   │  - Steam auth       │          ┌─────────────────────────────┐
-   │  - requests/approve │          │  Per-server workload         │
+   │  - Steam + RGL auth │          ┌─────────────────────────────┐
+   │  - scrims/approvals │          │  Per-server workload         │
    │  - RCON relay ──────┼─ 27015 ─▶│  SRCDS (TF2, app 232250)     │
    │  - metadata store   │          │  + MetaMod/SourceMod         │
    └─────────────────────┘          │  PVC: server.cfg, maps       │
-        MetalLB UDP LoadBalancer ◀─▶│  (bound to approved term)    │
+        MetalLB UDP LoadBalancer ◀─▶│  (bound to a scrim or term)  │
         (public IP : 27015 UDP)     └─────────────────────────────┘
                     ▲
               Players (TF2 client)
@@ -49,9 +49,9 @@
 - **Official Kubernetes Python client** to drive the cluster — create/patch/delete the
   per-server workloads and their services via the API rather than shelling out to
   `kubectl`.
-- **Metadata store** for users (Steam identities), server requests + approvals, and server
-  records: start with SQLite (single node); leave room to move to Postgres. (Not yet
-  present — the 001 scaffold has no persistence.)
+- **Metadata store** for users (Steam identities), RGL links and cached RGL data, scrims
+  and attendance, entitlement approvals, and server records: start with SQLite (single
+  node); leave room to move to Postgres.
 - **Web frontend** — server-rendered Jinja templates + a single stylesheet, kept
   minimal (no SPA/JS build toolchain).
 
@@ -60,22 +60,38 @@
   is the account identity. No passwords are stored by us.
 - A server-side session (signed cookie) is established after Steam returns; the session
   key and any Steam Web API key come from **OpenBao**.
-- The **buyer (captain) is the individual owner** of the servers they purchase — no
-  multi-member team accounts or roles yet (out of scope this phase).
+- The account is the **verified Steam identity plus a linked RGL identity**; that pair
+  unlocks the free scrim surface. **Team authority comes from RGL membership**, re-checked
+  server-side against stored memberships — never inferred from submitted ids. No in-app
+  role hierarchy beyond RGL membership plus the creator of a listing (out of scope this
+  phase).
+- A **granted server is individually owned by the captain**; an auto-started per-scrim
+  server is additionally **bound to the scrim it was created for and to the team that
+  scheduled it**.
 
-### Access — server request + operator approval (payment out-of-band)
-- A signed-in captain submits a **server request** (desired settings + term). A server is
-  provisioned **only after the operator approves** that request. The app **never processes
-  or stores payment/card data** — payment is arranged out-of-band; approval is the gate.
-- Model requests with a status (`pending` → `approved`/`declined`), an owner SteamID, the
-  requested settings, and (on approval) a term start/end. Approval is performed by the
-  operator through an operator-only view; the approved record is authoritative and enforced
-  **server-side** (never inferred from client input).
-- A **lifecycle reaper** enforces the term: at term end → **suspend** the workload → keep
-  the PVC through a **grace period** for renewal → **delete & reclaim** (workload, Service,
-  PVC, MetalLB IP).
+### Access — free to schedule, approved to provision (payment out-of-band)
+- The scrim surface (listings, proposals, claims, rosters, attendance, division browsing)
+  requires only the Steam + RGL identity and is **free** — no approval, no entitlement, no
+  payment gate anywhere in it.
+- Compute is the paid half. A server is provisioned **only against an operator-approved
+  entitlement**. The app **never processes or stores payment/card data** — payment is
+  arranged out-of-band; the recorded approval is the gate.
+- Two entitlement kinds: a **per-scrim server** for one specific scheduled match, and a
+  **season term** for a rented server. The concrete unit an operator grants for the
+  per-scrim kind (a single credit per match vs. a bundle) is **not yet decided** — the
+  constitution flags it as a follow-up to settle before the first provisioning feature is
+  specified.
+- Model approvals with a status (`pending` → `approved`/`declined`), an owner SteamID and
+  team, the requested settings, the scrim it is bound to (per-scrim) or a term start/end
+  (season). Approval is performed by the operator through an operator-only view; the
+  approved record is authoritative and enforced **server-side** (never inferred from client
+  input).
+- A **lifecycle reaper** enforces both lifecycles and must not let a server outlive its
+  entitlement: per-scrim → **destroy & reclaim** once the match has ended; season → at term
+  end **suspend** the workload → keep the PVC through a **grace period** for renewal →
+  **delete & reclaim** (workload, Service, PVC, MetalLB IP).
 
-### One rented server = one k8s workload
+### One granted server = one k8s workload
 - Container image: **SteamCMD-installed TF2 dedicated server** (Steam app
   `232250`), with **MetaMod + SourceMod** baked in for admin plugins. Built and
   pushed to `harbor.irulast.com`.
@@ -115,28 +131,43 @@
 
 1. **UDP on bare-metal** — MetalLB UDP pool + unique public address per server is
    the riskiest piece; validate it in isolation first.
-2. **Approval integrity** — provision strictly on a server-side operator approval; guard
-   against a client granting itself a server, double-provisioning, and approval races.
-3. **Season lifecycle** — the expiry reaper must reliably suspend → grace → delete
+2. **Approval integrity** — provision strictly on a server-side operator-approved
+   entitlement; guard against a client granting itself a server, double-provisioning,
+   approval races, and reusing one per-scrim entitlement for several scrims.
+3. **Scrim-bound auto-start** — creating a server on a schedule, bound to one scrim and to
+   the team that scheduled it, and tearing it down when the match ends; a rescheduled or
+   cancelled scrim must carry its server with it rather than orphan one.
+4. **Season lifecycle** — the expiry reaper must reliably suspend → grace → delete
    without leaking resources or deleting a server whose owner just renewed.
-4. **Steam GSLT** — a publicly-*listed* server needs a Game Server Login Token; since
+5. **Burst capacity** — scrims cluster into evenings, so the number of servers
+   auto-started concurrently must be bounded, and a scheduled scrim whose server cannot be
+   placed must fail **visibly** to its team rather than silently degrade the cluster.
+6. **Steam GSLT** — a publicly-*listed* server needs a Game Server Login Token; since
    servers are now publicly sold, decide GSLT provisioning early (per-server vs pool).
-5. **Image size / boot time** — TF2 game files are large; bake them into the image
-   (or a warm cache) so "purchase → joinable" stays near ~1 minute.
-6. **Orphan cleanup** — ensure delete reclaims the workload, service, PVC, and the
+7. **Image size / boot time** — TF2 game files are large; bake them into the image
+   (or a warm cache) so a scrim's server goes from "start provisioning" to joinable in
+   about a minute — comfortably before the scrim's scheduled start.
+8. **Orphan cleanup** — ensure delete reclaims the workload, service, PVC, and the
    MetalLB IP.
-7. **DDoS** — now in scope (competitive servers are targets); plan rate/abuse controls
+9. **DDoS** — now in scope (competitive servers are targets); plan rate/abuse controls
    and consider upstream filtering for the UDP pool.
 
 ## Suggested build order (for `/tasks`)
 
-1. **Sign in with Steam** — OpenID login + session + user records (identity foundation).
-2. Build + push the TF2 SRCDS container image; run it once by hand on `mke`.
-3. Prove MetalLB UDP exposure: one server, one public IP, join from a real client.
-4. Prove RCON: connect from a Python RCON client, run `status` / `changelevel`.
-5. **Server request + operator approval** — request form, operator review/approve view,
-   request/approval records (payment handled out-of-band).
-6. Control-plane provisioning: create a server **only for an approved request** (drives
-   k8s via the Kubernetes Python client); list/delete.
-7. Web UI over the API + the RCON web console; server term status + renewal request.
-8. Lifecycle reaper: suspend → grace → delete at term end.
+The free scheduling loop is built (features 001–004: UI shell, Steam sign-in, RGL linking
++ scrim scheduling, scrims dashboard, rosters, attendance, division browser). What remains
+is the paid half, and it leads with the unproven infrastructure risk:
+
+1. Build + push the TF2 SRCDS container image; run it once by hand on `mke`.
+2. Prove MetalLB UDP exposure: one server, one public IP, join from a real client.
+3. Prove RCON: connect from a Python RCON client, run `status` / `changelevel`.
+4. **Entitlement + operator approval** — a captain's ask against a scheduled scrim or for
+   a season term, an operator review/approve view, approval records (payment handled
+   out-of-band).
+5. Control-plane provisioning: create a server **only against an approved entitlement**
+   (drives k8s via the Kubernetes Python client); list/delete.
+6. **Per-scrim auto-start**: create the server ahead of a scheduled scrim's start, bound
+   to that scrim, under a concurrency cap; destroy it after the match.
+7. Web UI over the API + the RCON web console; season term status + renewal request.
+8. Lifecycle reaper: destroy after the match (per-scrim); suspend → grace → delete at term
+   end (season).

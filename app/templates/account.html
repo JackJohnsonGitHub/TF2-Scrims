@@ -53,7 +53,7 @@
       <p>You have <strong>no current team</strong> on RGL. Join a team to schedule scrims.</p>
     {% endif %}
 
-    <p class="muted">Last refreshed: {{ link.last_refreshed_at }} (UTC)</p>
+    <p class="muted">Last refreshed: {{ link.last_refreshed_at | local_dt }}</p>
     <div class="actions">
       <form method="post" action="{{ url_for('rgl.refresh') }}" style="display:inline">
         <button class="btn btn-sm" type="submit">Refresh</button>

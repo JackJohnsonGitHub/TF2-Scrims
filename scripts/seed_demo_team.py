@@ -148,9 +148,13 @@ def seed(db: sqlite3.Connection) -> None:
 
     db.commit()
     print("\nSeeded. You can now test:")
-    print("  - /scrims/listings : claim the demo team's open listing with your team")
-    print("  - /scrims          : accept/decline the demo team's incoming proposal")
-    print("  - /scrims/new      : propose to the demo team, then withdraw it")
+    print("  - /scrims      : one dashboard — claim the demo team's open listing with")
+    print("                   your team, and accept/decline its pending proposal")
+    print("  - /scrims/<id> : listing detail + team roster (demo teams carry fake RGL")
+    print("                   ids, so theirs shows the 'roster unavailable' notice —")
+    print("                   that is the intended fallback); your own team's listing")
+    print("                   also shows the attendance tracker")
+    print("  - /scrims/new  : propose to the demo team, then withdraw it")
 
 
 def main() -> None:

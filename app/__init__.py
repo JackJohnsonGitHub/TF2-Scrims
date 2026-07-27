@@ -8,6 +8,7 @@ from flask import Flask, render_template
 from .config import Config
 from .db import close_db, init_schema
 from .security import current_user
+from .timefmt import age_since, local_dt, pretty_utc
 
 
 def create_app(config_object: type[Config] = Config) -> Flask:
@@ -41,6 +42,12 @@ def create_app(config_object: type[Config] = Config) -> Flask:
     @app.context_processor
     def inject_current_user():
         return {"current_user": current_user()}
+
+    # One time format across the scrims screens: UTC server-side, rewritten to the
+    # viewer's timezone in the browser. Plus relative ages.
+    app.jinja_env.filters["local_dt"] = local_dt
+    app.jinja_env.filters["pretty_utc"] = pretty_utc
+    app.jinja_env.filters["age_since"] = age_since
 
     # Friendly 404 for unknown addresses / unknown server ids.
     @app.errorhandler(404)

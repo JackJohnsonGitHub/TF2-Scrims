@@ -200,6 +200,59 @@ def test_no_claim_form_for_owner_or_wrong_format(app, client, three_users, mock_
     assert "Claim" not in client.get(f"/scrims/{scrim_id}").get_data(as_text=True)
 
 
+# --- Why a viewer cannot claim (FR-012) + posting age / compact times (FR-009, FR-002) ---
+
+def test_owner_is_told_it_is_their_own_listing(app, client, three_users, mock_roster):
+    mock_roster(players=ROSTER)
+    post_listing(client)
+    as_user(client, A)
+    body = client.get(f"/scrims/{listing_id(app)}").get_data(as_text=True)
+    assert "your own team's listing" in body.lower()
+
+
+def test_viewer_without_a_same_format_team_is_told_why(app, client, three_users, mock_roster):
+    mock_roster(players=ROSTER)
+    post_listing(client)
+    as_user(client, C)  # highlander only — cannot claim a sixes listing
+    body = client.get(f"/scrims/{listing_id(app)}").get_data(as_text=True)
+    assert "sixes team" in body.lower()
+
+
+def test_expired_listing_says_it_is_no_longer_open(app, client, three_users, mock_roster):
+    mock_roster(players=ROSTER)
+    post_listing(client)
+    scrim_id = listing_id(app)
+    backdate(app, scrim_id)
+
+    as_user(client, A)  # participants only once expired (research §6)
+    body = client.get(f"/scrims/{scrim_id}").get_data(as_text=True)
+    assert "no longer open" in body.lower()
+
+
+def test_claimed_listing_says_it_is_no_longer_open(app, client, three_users, mock_roster):
+    mock_roster(players=ROSTER)
+    post_listing(client)
+    scrim_id = listing_id(app)
+    as_user(client, B)
+    client.post(f"/scrims/listings/{scrim_id}/claim", data={"team_id": "202"})
+
+    body = client.get(f"/scrims/{scrim_id}").get_data(as_text=True)
+    assert "no longer open" in body.lower()
+
+
+def test_detail_shows_posting_age_and_localizable_times(app, client, three_users, mock_roster):
+    import re
+    mock_roster(players=ROSTER)
+    post_listing(client)
+    as_user(client, B)
+    body = client.get(f"/scrims/{listing_id(app)}").get_data(as_text=True)
+    assert "just now" in body.lower()   # posting age, not only an absolute stamp
+    stamps = re.findall(r'<time class="ts" datetime="[^"]+">([^<]+)</time>', body)
+    assert len(stamps) >= 2             # scheduled time + posted stamp
+    for text in stamps:                 # readable UTC fallback, no raw ISO on screen
+        assert re.fullmatch(r"[A-Z][a-z]{2} \d{2} \d{1,2}:\d{2} [AP]M UTC", text), text
+
+
 # --- Attendance tracker (US3, FR-013..FR-017) ---
 
 A2 = "76561198000000005"  # teammate on team 101, not the listing creator

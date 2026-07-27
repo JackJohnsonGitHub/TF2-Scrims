@@ -38,9 +38,13 @@ Existing tables unchanged (new tables only — no ALTER migrations needed; `db.p
 `CREATE TABLE IF NOT EXISTS` startup schema covers existing databases).
 
 **Testing**: pytest + Flask test client. RGL is **mocked** as in 003, now including the team/roster
-endpoint. Coverage: combined dashboard content and ordering, expiry filtering + expired-claim
-rejection, roster rendering and outage fallback, attendance authorization matrix
-(self / creator / non-member) and tally, detail-page visibility.
+and season endpoints. Coverage: combined dashboard content and ordering, expiry filtering +
+expired-claim rejection, roster rendering and outage fallback, attendance authorization matrix
+(self / creator / non-member) and tally, detail-page visibility; for US4, season parsing, directory
+TTL/stale-if-error and bounded hydration (`tests/unit/test_rgl_season.py`) plus the division
+browser end-to-end — format scoping, on/off-platform labels, off-platform proposal roundtrip,
+RGL-down fallback (`tests/integration/test_propose_discovery.py`); and the shared time filters
+(`tests/unit/test_timefmt.py`).
 
 **Target Platform**: same container on `mke`. Outbound HTTPS to `api.rgl.gg` already established
 in 003; this feature adds one more **public, keyless** endpoint (`/v0/teams/{teamId}`).
@@ -71,22 +75,22 @@ scrims, rosters ≤ ~20 players. Trivial for SQLite.
 
 *GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
 
-Evaluated against Constitution v2.1.0:
+Evaluated against Constitution v3.0.0 (amended 2026-07-27):
 
 | Principle | Status | Notes |
 |---|---|---|
-| I. Ship the Smallest Paid Loop First | ⚠️ **Deviation — justified below** | Same standing deviation as 003: scrim UX is outside the core paid loop (request → approval → provision remains unbuilt). 004 is a user-directed continuation of the 003 surface; it adds no billing/provisioning complexity. See Complexity Tracking. |
-| II. Servers Are Cattle, Not Pets | ✅ N/A | No servers touched; scheduling stays schedule-only. |
+| I. Scrims First, Servers as the Upsell | ✅ Pass | 004 **is** the loop this principle puts first: it builds the free scheduling surface (dashboard, rosters, attendance, opponent discovery) that a team gets without paying a cent. No feature here stands in front of a payment, and nothing is deferred to a paid tier. |
+| II. Servers Are Cattle, Not Pets | ✅ N/A | Neither lifecycle (per-scrim or season-term) is touched; scheduling stays schedule-only and creates no workload, Service, PVC, or IP to reclaim. |
 | III. Kubernetes-Native Control | ✅ N/A | No cluster interaction. |
-| IV. Secure by Default | ✅ Pass | No new secrets (RGL team endpoint is public/keyless); attendance and detail visibility enforced server-side against memberships; scrims area keeps login + RGL-link gate (FR-008). |
+| IV. Secure by Default | ✅ Pass | No new secrets (RGL team/season endpoints are public/keyless); attendance and detail visibility enforced server-side against stored memberships, never inferred from submitted ids; scrims area keeps login + RGL-link gate (FR-008). No payment or card data anywhere in this feature. |
 | V. Reproducible Images | ✅ Pass | No new dependencies; image build unchanged. |
 | VI. Everything as Code | ✅ Pass | Schema additions, routes, templates all in-repo. |
-| VII. Right-Size the Blast Radius | ✅ Pass, with note | Additional RGL endpoints (team, season), always behind the 5 s timeout + SQLite caches + stale-if-error: rosters fetch only on detail views (~1/h/team); the season directory hydrates at most `RGL_HYDRATE_BATCH` teams per browse request (research §8) — never unbounded fan-out, no threads/schedulers. An RGL outage degrades one page section, never the dashboard or the quick pick. |
-| VIII. Steam-Authenticated, Approved Access | ✅ Pass | No transition grants compute; attendance/roster are informational. |
+| VII. Right-Size the Blast Radius | ✅ Pass, with note | The concurrency bound on auto-started servers is N/A — 004 starts none. What it does add is RGL fan-out (team, season endpoints), always behind the 5 s timeout + SQLite caches + stale-if-error: rosters fetch only on detail views (~1/h/team); the season directory hydrates at most `RGL_HYDRATE_BATCH` teams per browse request (research §8) — never unbounded fan-out, no threads/schedulers. An RGL outage degrades one page section, never the dashboard or the quick pick. |
+| VIII. Free to Schedule, Approved to Provision | ✅ Pass | Everything 004 ships sits in the **free schedule tier**: gated on the Steam-authenticated, RGL-linked pair and nothing more. No transition grants compute, so the provision tier's entitlement and binding rules never come into play. |
 
-**Result**: PASS with the same **explicitly justified Principle I deviation** carried from 003 —
-scrims polish continues to be chosen consciously ahead of the unproven paid loop (see Complexity
-Tracking).
+**Result**: PASS — no deviations. Under v3.0.0 the scrim surface is the core loop rather than work
+outside it, so the Principle I deviation this plan previously carried from 003 no longer exists
+(see Complexity Tracking).
 
 ## Project Structure
 
@@ -124,13 +128,20 @@ app/
 │                         #      read-only once scheduled_at has passed
 ├── config.py             # CHANGED: RGL_ROSTER_TTL_SECONDS; US4: RGL_DIRECTORY_TTL_SECONDS (86400),
 │                         #          RGL_HYDRATE_BATCH (20)
+├── timefmt.py            # NEW: pretty_utc / local_dt / age_since Jinja filters — one readable time
+│                         #      format, emitted as UTC inside <time class="ts"> for viewer-local
+│                         #      rendering in the browser (research §10)
+├── __init__.py           # CHANGED: register the timefmt filters on the app's Jinja env
 ├── routes/
 │   └── scrims.py         # CHANGED: index() renders the combined dashboard; /scrims/listings
 │                         #          becomes a redirect to /scrims; NEW GET /scrims/<id> detail;
-│                         #          NEW POST /scrims/<id>/attendance; US4: new() gains division
-│                         #          browser params (team_id, division_id, opponent_id) + hydration;
-│                         #          quick pick sourced from platform_teams()
+│                         #          NEW POST /scrims/<id>/attendance; NEW GET /scrims/listings/new
+│                         #          (dedicated post-a-listing page; POST endpoint unchanged);
+│                         #          US4: new() gains division browser params (team_id, division_id,
+│                         #          opponent_id) + hydration; quick pick sourced from platform_teams()
 ├── templates/
+│   ├── base.html         # CHANGED: small shell script rewriting <time class="ts"> elements into
+│   │                     #          the viewer's timezone via toLocaleString (research §10)
 │   ├── scrims.html       # CHANGED: combined dashboard — two-column grid (research §7): main col =
 │   │                     #          open listings (compact 4-col table) + "My matches & listings";
 │   │                     #          right rail = "Proposals"; top-right create/propose actions
@@ -150,6 +161,8 @@ tests/
 │   │                         #      stale-if-error, platform_teams() scoping
 │   ├── test_attendance.py    # NEW: authz matrix (self/creator/other-member/non-member), statuses,
 │   │                         #      tally, read-only after scheduled time, listing-origin only
+│   ├── test_timefmt.py       # NEW: pretty_utc/local_dt/age_since — readable UTC text, the <time>
+│   │                         #      wrapper the browser localizes, junk/future-stamp fallbacks
 │   └── test_scrims.py        # CHANGED: expiry — past listings excluded, expired claim rejected
 └── integration/
     ├── test_dashboard.py     # NEW: combined page (listings + my-scrims sections), ordering,
@@ -176,6 +189,13 @@ flood it.
 
 ## Complexity Tracking
 
+**No constitution deviations.** Every principle in the check above is PASS or N/A under v3.0.0;
+nothing in this feature required a justified violation.
+
 | Violation | Why Needed | Simpler Alternative Rejected Because |
 |-----------|------------|--------------------------------------|
-| **Principle I** — continuing scrim-surface work (004) before the core paid loop (request → approval → provision) is proven | User has explicitly directed this feature; it completes the scrim scheduling experience 003 started (dashboard as the scrims home, roster-informed claiming, attendance coordination) with no billing/provisioning complexity. | Building the paid loop first isn't "simpler," just a different order; 004 stays entirely in the schedule-only lane (no servers, secrets, or payments). Standing recommendation from 003 remains: don't let scrim polish indefinitely crowd out the request→approval→provision loop. |
+| *(none)* | — | — |
+
+The **Principle I** deviation this section previously recorded — continuing scrim-surface work
+ahead of the paid loop — was dissolved by the 2026-07-27 amendment to Constitution v3.0.0, which
+makes free scrim scheduling the core loop and paid servers the upsell that attaches to it.

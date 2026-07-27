@@ -20,7 +20,8 @@ from ..scrims import (ScrimError, accept, cancel, cancel_listing, claim,
                       get_scrim_for_viewer, incoming_pending, my_open_listings,
                       open_listings, outgoing_pending, upcoming_confirmed,
                       utc_now, withdraw)
-from ..security import current_user, login_required, rgl_link_required
+from ..security import (current_user, login_required, rgl_link_required,
+                        safe_next)
 
 bp = Blueprint("scrims", __name__)
 
@@ -54,16 +55,24 @@ def _int_field(name: str) -> int:
         raise ScrimError("Invalid team selection.")
 
 
+def _back(default: str = "scrims.index", **kwargs):
+    """Return to the page the action was taken from — the home dashboard and the
+    scrims dashboard both carry these forms, and being bounced to /scrims from
+    elsewhere loses your place. `safe_next` rejects off-site targets, so a forged
+    `next` cannot turn an action into an open redirect."""
+    return redirect(safe_next(request.form.get("next")) or url_for(default, **kwargs))
+
+
 def _run_action(action, *args):
     """Shared handler for the POST action endpoints: authority failures are 403,
-    everything else flashes and returns to the scrims dashboard."""
+    everything else flashes and returns to where the user acted."""
     try:
         action(_steam_id(), *args)
     except ScrimError as err:
         if err.status == 403:
             abort(403)
         flash(str(err), "error")
-    return redirect(url_for("scrims.index"))
+    return _back()
 
 
 @bp.get("/scrims")
@@ -300,9 +309,9 @@ def claim_listing(scrim_id):
         if err.status == 403:
             abort(403)
         flash(str(err), "error")
-        return redirect(url_for("scrims.index"))
+        return _back()
     flash("Scrim confirmed!", "success")
-    return redirect(url_for("scrims.index"))
+    return _back()
 
 
 @bp.post("/scrims/listings/<int:scrim_id>/cancel")

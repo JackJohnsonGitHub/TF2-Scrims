@@ -115,7 +115,8 @@ listings** (upcoming confirmed + own open listings) directly beneath; the right 
 listing** moved off the dashboard to a dedicated page (`GET /scrims/listings/new`, same POST
 endpoint; validation errors return to the form page). Listing rows were compacted so the table
 fits with **no horizontal scrolling**: notes fold under the team name and division under the
-format as muted sub-lines, times render as `YYYY-MM-DD HH:MM` UTC, and the scrims screen widens
+format as muted sub-lines, times render as `YYYY-MM-DD HH:MM` UTC (**superseded by §10** — times
+now render in each viewer's own timezone), and the scrims screen widens
 the page shell to 1200px (other screens keep 960px). `overflow-x: auto` on the grid's cards stays
 as a safety net only.
 
@@ -186,3 +187,22 @@ labels teams with (FR-019).
 
 **Alternatives considered**: keeping `all_teams()` — rejected as above; a separate "known teams"
 flag column — rejected: membership rows already encode it, no new state needed.
+
+## 10. Time display — viewer-local, UTC as the floor (user feedback, 2026-07-27)
+
+**Decision**: Timestamps stay ISO-8601 UTC in the database and on the wire. The server renders
+each one as readable UTC (`Jul 29 1:52 AM UTC`) inside a `<time class="ts" datetime="…">` element;
+a ~10-line script in the page shell rewrites the text into the viewer's timezone via
+`toLocaleString` (`Jul 28 8:52 PM CDT`). The zone name is always shown. `app/timefmt.py` holds
+`pretty_utc` / `local_dt` / `age_since` as Jinja filters, so no template formats a time itself.
+
+**Rationale**: Scrims are scheduled across timezones — a fixed zone (even Eastern, the RGL-NA
+default) makes every other region do arithmetic on a time they cannot afford to get wrong.
+Server-side localization would need a stored per-user timezone and a settings screen; the browser
+already knows the answer. Rendering UTC first means a JS-less client sees a correct, labelled time
+rather than a blank or a wrong one.
+
+**Alternatives considered**: (a) fixed `America/New_York` for everyone — rejected: misleading for
+Pacific/EU players; (b) prettier UTC only — rejected by the user: still mental math; (c) storing a
+timezone on the user record — rejected: a preference screen and a migration to learn what the
+browser reports for free.
