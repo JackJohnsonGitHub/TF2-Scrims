@@ -148,8 +148,15 @@ def test_anonymous_scrims_routes_redirect_to_login(client):
 
 
 def test_no_scheduling_action_provisions_servers(app, client, link_team):
-    from app.models import all_servers
-    baseline = [s.id for s in all_servers()]
+    """Scheduling on its own never creates a server. Feature 005 adds an opt-in
+    `use_credits` field, but the bare scheduling path must stay free of side effects."""
+    from app.db import get_db
+
+    def server_count():
+        with app.test_request_context():
+            return get_db().execute("SELECT COUNT(*) FROM servers").fetchone()[0]
+
+    baseline = server_count()
     setup_two_sixes_teams(link_team)
     as_user(client, A)
     propose(client)
@@ -157,7 +164,7 @@ def test_no_scheduling_action_provisions_servers(app, client, link_team):
     as_user(client, B)
     client.post(f"/scrims/{scrim_id}/accept")
     client.post(f"/scrims/{scrim_id}/cancel")
-    assert [s.id for s in all_servers()] == baseline  # FR-018: no side effects
+    assert server_count() == baseline  # FR-018: no side effects
 
 
 # --- Open listings (US3) ---

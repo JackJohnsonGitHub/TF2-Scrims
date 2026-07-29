@@ -6,19 +6,49 @@
 <div class="page-head">
   <h1>{{ server.name }}</h1>
   {% if server.demo %}<span class="badge badge-demo">DEMO</span>{% endif %}
-  <span class="badge {{ 'badge-on' if server.is_online else 'badge-off' }}">{{ server.status_label }}</span>
+  <span class="badge {{ 'badge-on' if server.is_live else 'badge-off' }}">{{ server.state_label }}</span>
 </div>
 {% if server.demo %}
-<div class="demo-banner">This is placeholder sample data — not a real running server.</div>
+<div class="demo-banner">This is sample data — not a real running server.</div>
 {% endif %}
+
+{# Never a blank state: if it isn't running, say why. #}
+{% if server.explanation %}
+<p class="muted">{{ server.explanation }}</p>
+{% endif %}
+
 <p class="muted">
-  Map: {{ server.map }} · Players: {{ server.slots_display }} · Address: {{ server.address or "—" }}
+  Map: {{ server.map }} · Players: {{ server.slots_display }}
+  {% if server.is_live and server.address %}
+  · Address: <code>{{ server.address }}</code>
+  {% if server.join_password %}· Join password: <code>{{ server.join_password }}</code>{% endif %}
+  {% endif %}
 </p>
 
+{% if server.window_starts_at %}
+<p class="muted">
+  Runs {{ server.window_starts_at | local_dt }} → {{ server.window_ends_at | local_dt }}
+  {% if server.scrim_id %}
+  · for <a href="{{ url_for('scrims.detail', scrim_id=server.scrim_id) }}">this scrim</a>
+  {% endif %}
+</p>
+{% endif %}
+
+{% if server.state == 'in_grace' %}
+{# The window is spent; this is the unpaid buffer, so make the deadline unmissable. #}
+<div class="demo-banner">
+  <strong>Overtime.</strong> This server's paid time has run out and it is running on a
+  {{ server.grace_remaining if server.grace_remaining is not none else 0 }}-minute
+  grace period. Extend it to keep playing — otherwise it stops when the grace ends.
+</div>
+{% endif %}
+
 <div class="two-col">
+  {% if is_owner %}
   <section class="panel">
     <h2>Settings</h2>
     <form class="form" method="post" action="{{ url_for('servers.update_settings', server_id=server.id) }}">
+      <input type="hidden" name="next" value="{{ request.full_path.rstrip('?') }}">
       <label class="field">
         <span>Server name</span>
         <input type="text" name="name" value="{{ server.name }}">
@@ -36,12 +66,11 @@
       </label>
       <label class="field">
         <span>Join password <em class="muted">(optional)</em></span>
-        <input type="text" name="join_password" value="">
+        <input type="text" name="join_password" value="{{ server.join_password or '' }}">
         {% if errors.get('join_password') %}<small class="err">{{ errors['join_password'] }}</small>{% endif %}
       </label>
       <div class="form-actions">
         <button class="btn btn-primary" type="submit">Save settings</button>
-        <span class="muted">Placeholder — not saved yet.</span>
       </div>
     </form>
   </section>
@@ -55,16 +84,27 @@
             {%- if line.kind == 'command' %}&gt; {% endif -%}{{ line.text }}
           </div>
         {% endfor %}
-      {% else %}
+      {% elif server.is_live %}
         <div class="console-line muted">Enter a command (e.g. <code>status</code>, <code>changelevel</code>) below.</div>
+      {% else %}
+        <div class="console-line muted">Commands can only be run while the server is running.</div>
       {% endif %}
     </div>
+    {% if server.is_live %}
     <form class="console-form" method="post" action="{{ url_for('console.run_command', server_id=server.id) }}">
       <input type="text" name="command" placeholder="status" autocomplete="off">
       <button class="btn btn-primary" type="submit">Run</button>
     </form>
     <p class="muted">Placeholder — RCON is not wired up yet.</p>
+    {% endif %}
   </section>
+  {% else %}
+  <section class="panel">
+    <h2>Joining</h2>
+    <p class="muted">This server belongs to your team, so you can see and join it. Its
+      settings and console are the owner's.</p>
+  </section>
+  {% endif %}
 </div>
 
 <p><a href="{{ url_for('servers.list_servers') }}">&larr; Back to servers</a></p>

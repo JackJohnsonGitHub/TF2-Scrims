@@ -1,21 +1,11 @@
-"""Unit tests for the Server view model and settings validation."""
-from app.models import Server, validate_server_settings
+"""Unit tests for server settings validation.
 
-
-def _server(**kw):
-    base = dict(id="s", name="S", map="cp_x", status="online",
-               players=3, max_slots=24, address="1.2.3.4:27015")
-    base.update(kw)
-    return Server(**base)
-
-
-def test_slots_display():
-    assert _server(players=12, max_slots=24).slots_display == "12/24"
-
-
-def test_status_helpers():
-    assert _server(status="online").is_online is True
-    assert _server(status="offline").status_label == "Offline"
+The `Server` view model that used to live here went away with feature 005: servers are
+persisted rows now, and their display formatting lives in `app/servers_store.py` — in
+one place, so there is no second formatting path to keep in step. See
+tests/unit/test_servers_store.py for those.
+"""
+from app.models import validate_server_settings
 
 
 def test_valid_settings_pass():

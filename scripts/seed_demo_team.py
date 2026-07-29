@@ -112,8 +112,58 @@ def seed_roster(db: sqlite3.Connection, team_id: int, fmt: str, now: str) -> int
     return len(DEMO_ROSTER_NAMES[fmt]) + 1
 
 
+def seed_servers(db: sqlite3.Connection, team_id: int, name: str, now: str) -> int:
+    """Two demo servers for a demo team — one running, one stopped.
+
+    They belong to the demo rival, not to you, which is the point: the access rule
+    (own it, or be on its team) gets exercised by the sample data rather than around
+    it. They are also flagged `demo` so no screen can pass them off as real.
+    """
+    existing = db.execute(
+        "SELECT COUNT(*) FROM servers WHERE team_id = ? AND demo = 1", (team_id,)
+    ).fetchone()[0]
+    if existing:
+        return 0
+    rows = [
+        (f"{name} — match server", "cp_process_final", 24, "running",
+         "10.0.0.5:27015", 12),
+        (f"{name} — jump practice", "jump_academy_b4", 8, "stopped", None, None),
+    ]
+    for srv_name, map_name, slots, state, address, players in rows:
+        db.execute(
+            """INSERT INTO servers (owner_steam_id, team_id, state, name, map,
+                                    max_slots, address, players, demo,
+                                    stopped_reason, created_at, updated_at)
+               VALUES (?,?,?,?,?,?,?,?,1,?,?,?)""",
+            (DEMO_STEAM_ID, team_id, state, srv_name, map_name, slots, address,
+             players, None if state == "running" else "time_expired", now, now),
+        )
+    return len(rows)
+
+
 def clean(db: sqlite3.Connection) -> None:
     ph = ",".join("?" * len(DEMO_TEAM_IDS))
+    # Servers before scrims: a per-scrim server references its scrim, and foreign keys
+    # are enforced as of feature 005 — deleting the scrim first would now fail.
+    db.execute(
+        f"""DELETE FROM credit_ledger WHERE server_id IN (
+                SELECT id FROM servers WHERE team_id IN ({ph})
+                OR owner_steam_id = ?)""",
+        (*DEMO_TEAM_IDS, DEMO_STEAM_ID),
+    )
+    db.execute(
+        f"DELETE FROM servers WHERE team_id IN ({ph}) OR owner_steam_id = ?",
+        (*DEMO_TEAM_IDS, DEMO_STEAM_ID),
+    )
+    db.execute(
+        f"""DELETE FROM credit_ledger WHERE scrim_id IN (
+                SELECT id FROM scrims WHERE proposer_team_id IN ({ph})
+                OR opponent_team_id IN ({ph}) OR created_by = ? OR notes = ?)""",
+        (*DEMO_TEAM_IDS, *DEMO_TEAM_IDS, DEMO_STEAM_ID, ATTENDANCE_NOTE),
+    )
+    db.execute("DELETE FROM credit_ledger WHERE steam_id = ?", (DEMO_STEAM_ID,))
+    db.execute("DELETE FROM payments WHERE steam_id = ?", (DEMO_STEAM_ID,))
+    db.execute("DELETE FROM steam_trade_links WHERE steam_id = ?", (DEMO_STEAM_ID,))
     # Attendance rows first — no ON DELETE CASCADE, so they would outlive their
     # scrim and reappear against a re-seeded one with the same id.
     db.execute(
@@ -136,7 +186,8 @@ def clean(db: sqlite3.Connection) -> None:
     db.execute(f"DELETE FROM rgl_teams WHERE rgl_team_id IN ({ph})", DEMO_TEAM_IDS)
     db.execute("DELETE FROM users WHERE steam_id = ?", (DEMO_STEAM_ID,))
     db.commit()
-    print(f"Removed demo user, demo teams, demo rosters, and {n} demo scrim(s).")
+    print(f"Removed demo user, demo teams, demo rosters, demo servers, "
+          f"credits and {n} demo scrim(s).")
 
 
 def seed(db: sqlite3.Connection) -> None:
@@ -182,6 +233,9 @@ def seed(db: sqlite3.Connection) -> None:
         )
         size = seed_roster(db, team_id, fmt, now)
         print(f"[{fmt}] roster seeded for {name} ({size} players)")
+        made = seed_servers(db, team_id, name, now)
+        if made:
+            print(f"[{fmt}] {made} demo server(s) seeded for {name}")
 
         # One future open listing from the demo team, claimable by a real team.
         have_listing = db.execute(

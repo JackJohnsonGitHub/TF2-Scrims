@@ -1,34 +1,51 @@
-"""Admin console command handler (FR-005).
+"""Admin console command handler.
 
-Echoes the submitted command into the console output with a placeholder response.
-No real RCON traffic occurs this phase.
+RCON is the most privileged surface there is, so only the captain the server was
+granted to may reach it (constitution IV/VIII) — a teammate can see and join a server
+without being able to run commands against it.
+
+`[sim]`: no real RCON traffic occurs this increment. What is real is the refusal: a
+server that is not running says so with a reason, rather than answering as though the
+command went somewhere.
 """
 from flask import Blueprint, abort, render_template, request
 
-from ..models import get_accessible_server
+from .. import servers_store as store
 from ..rgl_store import get_user_teams
 from ..security import current_user, login_required
 
 bp = Blueprint("console", __name__)
 
 
-@bp.post("/servers/<server_id>/console")
+@bp.post("/servers/<int:server_id>/console")
 @login_required
 def run_command(server_id):
-    # RCON is the most privileged surface there is: only the server's own team
-    # may reach it (constitution IV/VIII).
     steam_id = current_user()["steam_id"]
     team_ids = [t["rgl_team_id"] for t in get_user_teams(steam_id)]
-    server = get_accessible_server(server_id, steam_id, team_ids)
-    if server is None:
+    server = store.get_accessible_server(server_id, steam_id, team_ids)
+    if server is None or not store.is_owner(server, steam_id):
         abort(404)
+
     command = (request.form.get("command") or "").strip()
     console_output = []
-    if command:
+    if not store.is_live(server):
+        # Refusing beats a placeholder reply that implies the command landed.
+        console_output.append({
+            "kind": "response",
+            "text": f"Not sent — this server is {store.state_label(server).lower()}. "
+                    "Commands can only be run while it is running.",
+        })
+    elif command:
         console_output.append({"kind": "command", "text": command})
         console_output.append(
             {"kind": "response", "text": "Placeholder response — RCON is not wired up yet."}
         )
     return render_template(
-        "server_detail.html", server=server, errors={}, console_output=console_output
+        "server_detail.html", server=_decorate(server), is_owner=True,
+        errors={}, console_output=console_output
     )
+
+
+def _decorate(server: dict) -> dict:
+    from .servers import _view
+    return _view(server)

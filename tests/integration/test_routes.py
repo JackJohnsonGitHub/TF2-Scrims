@@ -7,16 +7,22 @@ placeholder server content below it.
 """
 from datetime import datetime, timedelta, timezone
 
-from app.models import DEMO_TEAM_ID, SAMPLE_SERVERS
+from app.models import DEMO_OWNER_STEAM_ID, DEMO_TEAM_ID
 from tests.conftest import rgl_team
 
+RUNNING, STOPPED = "Friday Night PUG", "Jump Practice"
 
-def on_server_team(login, link_team):
-    """Sign in as someone on the RGL team the sample servers are bound to — the
-    only people who may see or join them (constitution VIII)."""
-    steam_id = login()
+
+def on_server_team(login, link_team, demo_servers, as_owner=False):
+    """Sign in as someone who may see the demo team's servers, and seed them.
+
+    Servers are persisted rows as of feature 005, so a test creates them rather than
+    importing a module-level sample list. `as_owner` signs in as the captain the
+    servers were granted to, which is who the settings and console belong to.
+    """
+    steam_id = login(DEMO_OWNER_STEAM_ID) if as_owner else login()
     link_team(steam_id, [rgl_team(DEMO_TEAM_ID, "Server Owners", "SRV", "sixes")])
-    return steam_id
+    return steam_id, demo_servers()
 
 
 def test_healthz(client):
@@ -45,60 +51,73 @@ def test_server_list_renders(client, login):
     assert b'data-screen="servers-list"' in resp.data
 
 
-def test_create_server_form_renders(client, login):
+def test_self_service_server_creation_is_gone(client, login):
+    """Feature 001 shipped a "+ Create server" form. Constitution v3.1.0 Principle
+    VIII leaves no user-completable path to it — a server exists only because credits
+    were granted — so the form promised an action nobody could take. Deliberate break
+    of 001's spec, recorded in specs/005-servers-page/plan.md."""
     login()
-    resp = client.get("/servers/new")
-    assert resp.status_code == 200
-    assert b'data-screen="server-new"' in resp.data
-    assert b'name="max_slots"' in resp.data
+    assert client.get("/servers/new").status_code == 404
+    assert client.post("/servers/new", data={"name": "X"}).status_code == 404
+
+    nav = client.get("/servers").get_data(as_text=True)
+    assert "Create server" not in nav
+    assert "Create your first server" not in nav
+    assert "Create server" not in client.get("/").get_data(as_text=True)
 
 
-def test_server_detail_renders(client, login, link_team):
-    on_server_team(login, link_team)
-    resp = client.get(f"/servers/{SAMPLE_SERVERS[0].id}")
+def test_server_detail_renders(client, login, link_team, demo_servers):
+    _steam_id, ids = on_server_team(login, link_team, demo_servers, as_owner=True)
+    resp = client.get(f"/servers/{ids[0]}")
     assert resp.status_code == 200
     assert b'data-screen="server-detail"' in resp.data
     assert b"Settings" in resp.data
     assert b"Admin console" in resp.data
 
 
-def test_demo_servers_are_tagged(client, login, link_team):
-    on_server_team(login, link_team)
+def test_demo_servers_are_tagged(client, login, link_team, demo_servers):
+    _steam_id, ids = on_server_team(login, link_team, demo_servers)
     assert b">DEMO<" in client.get("/servers").data
-    assert b">DEMO<" in client.get(f"/servers/{SAMPLE_SERVERS[0].id}").data
+    assert b">DEMO<" in client.get(f"/servers/{ids[0]}").data
 
 
 # --- Server access: you see only what your own team can join (constitution VIII) ---
 
-def test_servers_of_another_team_are_hidden_from_lists(client, login, link_team):
+def test_servers_of_another_team_are_hidden_from_lists(client, login, link_team,
+                                                       demo_servers):
     """A user on some other RGL team sees none of that team's servers, on either
     the home dashboard or the servers list."""
+    demo_servers()
     steam_id = login()
     link_team(steam_id, [rgl_team(4242, "Some Other Team", "OTH", "sixes")])
 
     home = client.get("/").get_data(as_text=True)
     servers = client.get("/servers").get_data(as_text=True)
-    for name in (SAMPLE_SERVERS[0].name, SAMPLE_SERVERS[1].name):
+    for name in (RUNNING, STOPPED):
         assert name not in home
         assert name not in servers
     assert "No servers yet" in servers          # honest empty state, not a filtered table
     assert "Recent servers" not in home
 
 
-def test_unlinked_user_sees_no_servers(client, login):
-    """No RGL team at all means no server is yours — and the page still renders."""
+def test_unlinked_user_sees_no_servers(client, login, demo_servers):
+    """No RGL team at all means no server is yours — and the page still renders,
+    prompting the RGL link rather than showing an inventory."""
+    demo_servers()
     login()
     body = client.get("/").get_data(as_text=True)
-    assert body.count(SAMPLE_SERVERS[0].name) == 0
-    assert client.get("/servers").status_code == 200
+    assert body.count(RUNNING) == 0
+    servers = client.get("/servers")
+    assert servers.status_code == 200
+    assert b"Link your RGL account" in servers.data
 
 
-def test_another_teams_server_is_404_not_403(client, login, link_team):
+def test_another_teams_server_is_404_not_403(client, login, link_team, demo_servers):
     """Detail, settings and RCON are all indistinguishable from a nonexistent
     server — being told "forbidden" would confirm the server exists."""
+    sid = demo_servers()[0]
     steam_id = login()
     link_team(steam_id, [rgl_team(4242, "Some Other Team", "OTH", "sixes")])
-    sid = SAMPLE_SERVERS[0].id
 
     assert client.get(f"/servers/{sid}").status_code == 404
     assert client.post(f"/servers/{sid}/console", data={"command": "status"}).status_code == 404
@@ -115,21 +134,57 @@ def test_unknown_path_is_404(client):
 def test_unknown_server_is_404(client, login):
     login()
     assert client.get("/servers/does-not-exist").status_code == 404
+    assert client.get("/servers/999999").status_code == 404
 
 
-def test_create_validation_rejects_bad_slots(client, login):
-    login()
-    resp = client.post("/servers/new", data={"name": "X", "map": "cp_x", "max_slots": "999"})
+def test_settings_validation_rejects_bad_slots(client, login, link_team, demo_servers):
+    _steam_id, ids = on_server_team(login, link_team, demo_servers, as_owner=True)
+    resp = client.post(f"/servers/{ids[0]}/settings", data={
+        "name": "X", "map": "cp_x", "max_slots": "999"})
     assert resp.status_code == 400
     assert b"Max slots must be between" in resp.data
 
 
-def test_console_echoes_command(client, login, link_team):
-    on_server_team(login, link_team)
-    resp = client.post(f"/servers/{SAMPLE_SERVERS[0].id}/console", data={"command": "status"})
+def test_settings_persist(client, login, link_team, demo_servers):
+    _steam_id, ids = on_server_team(login, link_team, demo_servers, as_owner=True)
+    client.post(f"/servers/{ids[0]}/settings", data={
+        "name": "Renamed", "map": "cp_gullywash_final1", "max_slots": "18"})
+    body = client.get(f"/servers/{ids[0]}").get_data(as_text=True)
+    assert "Renamed" in body and "cp_gullywash_final1" in body
+
+
+def test_console_echoes_command_on_a_running_server(client, login, link_team,
+                                                    demo_servers):
+    _steam_id, ids = on_server_team(login, link_team, demo_servers, as_owner=True)
+    resp = client.post(f"/servers/{ids[0]}/console", data={"command": "status"})
     assert resp.status_code == 200
     assert b"status" in resp.data
     assert b"Placeholder response" in resp.data
+
+
+def test_console_refuses_when_the_server_is_not_running(client, login, link_team,
+                                                        demo_servers):
+    """A placeholder reply on a stopped server implies the command landed somewhere."""
+    _steam_id, ids = on_server_team(login, link_team, demo_servers, as_owner=True)
+    resp = client.post(f"/servers/{ids[1]}/console", data={"command": "status"})
+    assert resp.status_code == 200
+    assert b"Not sent" in resp.data
+    assert b"Placeholder response" not in resp.data
+
+
+def test_a_teammate_who_is_not_the_owner_gets_no_controls(client, login, link_team,
+                                                          demo_servers):
+    """Visible and joinable, but settings and console belong to the captain the
+    server was granted to (Principle VIII)."""
+    _steam_id, ids = on_server_team(login, link_team, demo_servers)  # not the owner
+    body = client.get(f"/servers/{ids[0]}").get_data(as_text=True)
+    assert "Admin console" not in body
+    assert "Save settings" not in body
+    assert "can see and join it" in body
+    assert client.post(f"/servers/{ids[0]}/settings", data={
+        "name": "X", "map": "cp_x", "max_slots": "24"}).status_code == 404
+    assert client.post(f"/servers/{ids[0]}/console",
+                       data={"command": "status"}).status_code == 404
 
 
 # --- Scrims lead the home dashboard (constitution v3.0.0, Principles I & VIII) ---
@@ -173,8 +228,10 @@ def test_home_shows_linked_users_scrim_picture(app, client, link_team):
     assert '<time class="ts"' in body            # every stamp goes through local_dt
     assert "Sixes" in body                       # format_labels, not the raw key
     assert 'href="/scrims"' in body              # "View all scrims"
-    # servers are a small side box now, not a section under the scrims
-    assert "Your servers" in body and '"/servers/new"' in body
+    # servers are a small side box now, not a section under the scrims — and it links
+    # to the inventory only, since there is no create-a-server action to offer
+    assert "Your servers" in body and '"/servers"' in body
+    assert '"/servers/new"' not in body
     assert "Recent servers" not in body
 
 
