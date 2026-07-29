@@ -43,7 +43,7 @@
   </div>
 </div>
 
-{% if not upcoming and not incoming and not my_listings %}
+{% if not upcoming and not incoming and not outgoing and not my_listings %}
 <section class="card">
   <h2>No scrims scheduled yet</h2>
   <p class="muted">
@@ -61,13 +61,18 @@
     <div class="rail-item">
       <a href="{{ url_for('scrims.detail', scrim_id=s.id) }}"><strong>{{ s.proposer_name }} vs {{ s.opponent_name }}</strong></a>
       <span class="rail-meta">{{ format_labels.get(s.format, s.format) }} · {{ s.scheduled_at | local_dt }}</span>
+      <form method="post" action="{{ url_for('scrims.cancel_scrim', scrim_id=s.id) }}" style="display:inline">
+        <input type="hidden" name="next" value="{{ request.full_path.rstrip('?') }}">
+        <button class="btn btn-sm" type="submit">Cancel</button>
+      </form>
     </div>
     {% endfor %}
   {% else %}<p class="muted">No confirmed matches on the calendar.</p>{% endif %}
 </section>
 
 <section class="card">
-  <h2>Proposals waiting on you</h2>
+  <h2>Proposals</h2>
+  <h3>Waiting on you</h3>
   {% if incoming %}
     {% for s in incoming %}
     <div class="rail-item">
@@ -85,12 +90,33 @@
     {% endfor %}
   {% else %}<p class="muted">Nothing needs a response right now.</p>{% endif %}
 
+  {% if outgoing %}
+  <h3>Sent by you</h3>
+    {% for s in outgoing %}
+    <div class="rail-item">
+      {{ s.proposer_name }} → <strong>{{ s.opponent_name }}</strong>
+      <span class="rail-meta">{{ format_labels.get(s.format, s.format) }} · {{ s.scheduled_at | local_dt }}</span>
+      {% if not s.opponent_on_platform %}
+      <span class="rail-meta">Waiting for this team to join the platform to respond.</span>
+      {% endif %}
+      <form method="post" action="{{ url_for('scrims.withdraw_scrim', scrim_id=s.id) }}" style="display:inline">
+        <input type="hidden" name="next" value="{{ request.full_path.rstrip('?') }}">
+        <button class="btn btn-sm" type="submit">Withdraw</button>
+      </form>
+    </div>
+    {% endfor %}
+  {% endif %}
+
   {% if my_listings %}
   <h3>Your open listings</h3>
     {% for s in my_listings %}
     <div class="rail-item">
       <a href="{{ url_for('scrims.detail', scrim_id=s.id) }}"><strong>{{ s.proposer_name }}</strong></a>
       <span class="rail-meta">{{ format_labels.get(s.format, s.format) }} · {{ s.scheduled_at | local_dt }} · waiting to be claimed</span>
+      <form method="post" action="{{ url_for('scrims.cancel_listing_route', scrim_id=s.id) }}" style="display:inline">
+        <input type="hidden" name="next" value="{{ request.full_path.rstrip('?') }}">
+        <button class="btn btn-sm" type="submit">Cancel listing</button>
+      </form>
     </div>
     {% endfor %}
   {% endif %}

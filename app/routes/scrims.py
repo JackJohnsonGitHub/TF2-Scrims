@@ -114,13 +114,24 @@ def detail(scrim_id):
     my_team_ids = {t["rgl_team_id"] for t in my_teams}
     open_and_future = (scrim["status"] == "open"
                        and scrim["scheduled_at"] > utc_now())
-    claim_teams = [] if scrim["proposer_team_id"] in my_team_ids else [
+    is_own = scrim["proposer_team_id"] in my_team_ids
+    is_opponent = scrim["opponent_team_id"] in my_team_ids
+    claim_teams = [] if is_own else [
         t for t in my_teams if t["format"] == scrim["format"]]
+
+    # Which lifecycle actions this viewer may take, mirroring the service rules in
+    # scrims.py exactly. A scrim has to be actionable from its own page — the
+    # dashboards are a convenience, not the only way to reach a scrim.
+    can_respond = scrim["status"] == "pending" and is_opponent
+    can_withdraw = scrim["status"] == "pending" and is_own
+    can_cancel = scrim["status"] == "confirmed" and (is_own or is_opponent)
+    can_cancel_listing = (scrim["origin"] == "listing"
+                          and scrim["status"] == "open" and is_own)
 
     # Attendance renders only for posting-team members (FR-016); the roster
     # section becomes the tracker for them.
     attendance = None
-    if scrim["proposer_team_id"] in my_team_ids:
+    if is_own:
         attendance = roster_with_attendance(scrim)
     return render_template(
         "scrim_detail.html",
@@ -129,7 +140,11 @@ def detail(scrim_id):
         roster_fetched_at=roster_fetched_at,
         claim_teams=claim_teams if open_and_future else [],
         open_and_future=open_and_future,
-        is_own=scrim["proposer_team_id"] in my_team_ids,
+        is_own=is_own,
+        can_respond=can_respond,
+        can_withdraw=can_withdraw,
+        can_cancel=can_cancel,
+        can_cancel_listing=can_cancel_listing,
         attendance=attendance,
         attending=attending_count(attendance) if attendance is not None else 0,
         required=required_players(scrim["format"]),

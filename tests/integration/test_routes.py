@@ -168,7 +168,7 @@ def test_home_shows_linked_users_scrim_picture(app, client, link_team):
     body = client.get("/").get_data(as_text=True)
     assert 'data-screen="dashboard"' in body
     assert "Upcoming matches" in body and "Alpha" in body and "Bravo" in body
-    assert "Proposals waiting on you" in body and "Accept" in body
+    assert "Waiting on you" in body and "Accept" in body
     assert "Open listings you can claim" in body and "Charlie" in body
     assert '<time class="ts"' in body            # every stamp goes through local_dt
     assert "Sixes" in body                       # format_labels, not the raw key
@@ -176,6 +176,63 @@ def test_home_shows_linked_users_scrim_picture(app, client, link_team):
     # servers are a small side box now, not a section under the scrims
     assert "Your servers" in body and '"/servers/new"' in body
     assert "Recent servers" not in body
+
+
+def test_home_can_cancel_and_withdraw_not_just_respond(app, client, link_team):
+    """Every scrim the home dashboard shows must be actionable from it. It used to
+    render upcoming matches, own listings and outgoing proposals with no way to
+    call any of them off, stranding the user on the app's default screen."""
+    link_team(A, [TEAM_A], persona="CaptainA")
+    link_team(B, [TEAM_B], persona="CaptainB")
+    with app.test_request_context():
+        from app.scrims import accept, create_listing, create_proposal
+        accept(B, create_proposal(A, 101, 202, future_iso(2)))   # Alpha vs Bravo, confirmed
+        outgoing = create_proposal(A, 101, 202, future_iso(5))   # A → B, still pending
+        listing = create_listing(A, 101, future_iso(7))          # A's own open listing
+    as_user(client, A)
+
+    body = client.get("/").get_data(as_text=True)
+    match_id = _confirmed_id(app, A)
+    assert f'action="/scrims/{match_id}/cancel"' in body, "no way to cancel a match"
+    assert f'action="/scrims/{outgoing}/withdraw"' in body, "no way to withdraw"
+    assert f'action="/scrims/listings/{listing}/cancel"' in body, "no way to pull a listing"
+    assert "Sent by you" in body
+
+
+def _confirmed_id(app, steam_id):
+    with app.test_request_context():
+        from app.scrims import upcoming_confirmed
+        return upcoming_confirmed(steam_id)[0]["id"]
+
+
+def test_scrim_detail_carries_its_own_lifecycle_actions(app, client, link_team):
+    """A scrim is actionable from its own page. Reaching it by link and finding no
+    way to act sends you hunting through /scrims for the same row."""
+    link_team(A, [TEAM_A], persona="CaptainA")
+    link_team(B, [TEAM_B], persona="CaptainB")
+    with app.test_request_context():
+        from app.scrims import create_listing, create_proposal
+        proposal = create_proposal(A, 101, 202, future_iso(3))
+        listing = create_listing(A, 101, future_iso(6))
+
+    as_user(client, B)  # recipient sees accept/decline on the proposal's own page
+    body = client.get(f"/scrims/{proposal}").get_data(as_text=True)
+    assert f'action="/scrims/{proposal}/accept"' in body
+    assert f'action="/scrims/{proposal}/decline"' in body
+
+    as_user(client, A)  # proposer sees withdraw there instead, never accept
+    body = client.get(f"/scrims/{proposal}").get_data(as_text=True)
+    assert f'action="/scrims/{proposal}/withdraw"' in body
+    assert f'action="/scrims/{proposal}/accept"' not in body
+    # ...and can pull their own listing from its page
+    body = client.get(f"/scrims/{listing}").get_data(as_text=True)
+    assert f'action="/scrims/listings/{listing}/cancel"' in body
+
+    as_user(client, C)  # an outsider browsing the open listing gets no lifecycle action
+    link_team(C, [TEAM_C], persona="CaptainC")
+    body = client.get(f"/scrims/{listing}").get_data(as_text=True)
+    assert f'action="/scrims/listings/{listing}/cancel"' not in body
+    assert f'action="/scrims/{listing}/cancel"' not in body
 
 
 def test_acting_on_a_scrim_returns_to_the_page_you_acted_from(app, client, link_team):

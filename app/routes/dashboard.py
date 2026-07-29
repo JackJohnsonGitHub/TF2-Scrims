@@ -12,7 +12,7 @@ from flask import Blueprint, render_template
 
 from ..rgl_store import get_user_teams
 from ..scrims import (incoming_pending, my_open_listings, open_listings,
-                      upcoming_confirmed)
+                      outgoing_pending, upcoming_confirmed)
 from ..security import current_user
 
 bp = Blueprint("dashboard", __name__)
@@ -36,10 +36,13 @@ def index():
 
     # The scrim queries only run for a linked user with a team; without one there is
     # nothing to act for, and the page renders the link-your-RGL-account prompt.
-    upcoming, incoming, my_listings, listings = [], [], [], []
+    upcoming, incoming, outgoing, my_listings, listings = [], [], [], [], []
     if my_teams:
         upcoming = upcoming_confirmed(steam_id)
         incoming = incoming_pending(steam_id)
+        # Outgoing proposals are here so withdrawing one doesn't require a detour
+        # to /scrims — every scrim this page shows must be actionable from it.
+        outgoing = outgoing_pending(steam_id)
         my_listings = my_open_listings(steam_id)
         # Soonest first (open_listings orders by scheduled_at); the viewer's own
         # listings get their own section, so they don't crowd out claimable ones.
@@ -53,6 +56,7 @@ def index():
         my_teams=my_teams,
         upcoming=upcoming,
         incoming=incoming,
+        outgoing=outgoing,
         my_listings=my_listings,
         listings=listings,
         format_labels=FORMAT_LABELS,

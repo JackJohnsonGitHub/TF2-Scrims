@@ -40,8 +40,7 @@
   {# FR-012: say why the claim action is unavailable, rather than dropping it silently. #}
   <p class="muted">
     {% if scrim.origin != "listing" %}
-    This is a directed proposal, not an open listing — accept or decline it from
-    <a href="{{ url_for('scrims.index') }}">your scrims</a>.
+    This is a directed proposal, not an open listing.
     {% elif scrim.status == "confirmed" %}
     This listing is no longer open — {{ scrim.opponent_name or "another team" }} claimed it.
     {% elif scrim.status == "cancelled" %}
@@ -55,6 +54,42 @@
     can't claim this listing.
     {% endif %}
   </p>
+  {% endif %}
+
+  {# Lifecycle actions for this one scrim. The flags mirror the service rules in
+     scrims.py, so a button that renders here always succeeds — and a scrim is
+     actionable from its own page rather than only from a dashboard listing it. #}
+  {% if can_respond or can_withdraw or can_cancel or can_cancel_listing %}
+  <div class="form-actions">
+    {% if can_respond %}
+    <form method="post" action="{{ url_for('scrims.accept_scrim', scrim_id=scrim.id) }}">
+      <input type="hidden" name="next" value="{{ request.full_path.rstrip('?') }}">
+      <button class="btn btn-primary" type="submit">Accept</button>
+    </form>
+    <form method="post" action="{{ url_for('scrims.decline_scrim', scrim_id=scrim.id) }}">
+      <input type="hidden" name="next" value="{{ request.full_path.rstrip('?') }}">
+      <button class="btn" type="submit">Decline</button>
+    </form>
+    {% endif %}
+    {% if can_withdraw %}
+    <form method="post" action="{{ url_for('scrims.withdraw_scrim', scrim_id=scrim.id) }}">
+      <input type="hidden" name="next" value="{{ request.full_path.rstrip('?') }}">
+      <button class="btn" type="submit">Withdraw proposal</button>
+    </form>
+    {% endif %}
+    {% if can_cancel %}
+    <form method="post" action="{{ url_for('scrims.cancel_scrim', scrim_id=scrim.id) }}">
+      <input type="hidden" name="next" value="{{ request.full_path.rstrip('?') }}">
+      <button class="btn" type="submit">Cancel match</button>
+    </form>
+    {% endif %}
+    {% if can_cancel_listing %}
+    <form method="post" action="{{ url_for('scrims.cancel_listing_route', scrim_id=scrim.id) }}">
+      <input type="hidden" name="next" value="{{ request.full_path.rstrip('?') }}">
+      <button class="btn" type="submit">Cancel listing</button>
+    </form>
+    {% endif %}
+  </div>
   {% endif %}
 </section>
 
