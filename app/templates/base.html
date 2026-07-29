@@ -20,6 +20,14 @@
     </nav>
     <div class="identity">
       {% if current_user %}
+        {# Credits are what let a scrim have a server, so the balance belongs where it is
+           always visible — including mid-match, when the question is "can I extend?". #}
+        <a class="credit-box{{ ' credit-box-empty' if not credit_balance }}"
+           href="{{ url_for('credits.index') }}"
+           title="{% if credit_balance %}{{ credit_balance }} hour(s) of server time{% else %}You have no credits — click to buy some{% endif %}">
+          <span class="credit-num">{{ credit_balance }}</span>
+          <span class="credit-label">{{ 'credit' if credit_balance == 1 else 'credits' }}</span>
+        </a>
         {% if current_user.avatar_url %}
           <img class="avatar" src="{{ current_user.avatar_url }}" alt="" width="28" height="28">
         {% else %}

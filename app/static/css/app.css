@@ -46,6 +46,20 @@ a:hover { text-decoration: underline; }
 .persona { color: var(--ink); font-size: 14px; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .btn-sm { padding: 5px 10px; font-size: 13px; }
 
+/* credit balance box (header) — accent-bordered so it reads as currency rather than
+   another nav item, and dimmed at zero so an empty balance is obvious at a glance. */
+.credit-box {
+  display: inline-flex; align-items: baseline; gap: 5px;
+  padding: 4px 10px; border-radius: 6px;
+  background: var(--panel-2); border: 1px solid var(--accent);
+  text-decoration: none; line-height: 1.2; white-space: nowrap;
+}
+.credit-box:hover { background: var(--panel); border-color: var(--accent-ink); }
+.credit-num { color: var(--accent); font-weight: 700; font-size: 15px; }
+.credit-label { color: var(--muted); font-size: 12px; }
+.credit-box-empty { border-color: var(--line); }
+.credit-box-empty .credit-num { color: var(--muted); }
+
 /* landing / sign-in */
 .landing { text-align: center; padding: 60px 24px; }
 .landing h1 { font-size: 30px; }

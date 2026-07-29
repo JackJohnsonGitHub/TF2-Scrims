@@ -488,3 +488,52 @@ def test_a_payment_is_not_visible_to_a_teammate(client, app, login, link_team,
     body = client.get("/credits").get_data(as_text=True)
     assert "payment in progress" not in body
     assert "Start trade offer" not in body or "trade URL" in body
+
+
+# --- the header credit box ----------------------------------------------------------
+
+def test_the_header_shows_the_credit_balance_on_every_page(client, signed_in, app):
+    """Credits gate whether a scrim can have a server, so the balance belongs somewhere
+    always visible — not only on /credits."""
+    give_credits(app, PAYER, 7)
+
+    for path in ("/", "/servers", "/scrims", "/account", "/credits"):
+        body = client.get(path).get_data(as_text=True)
+        assert 'class="credit-box' in body, f"no credit box on {path}"
+        assert ">7<" in body, f"balance missing on {path}"
+
+
+def test_the_box_is_dimmed_and_singular_where_appropriate(client, signed_in, app):
+    body = client.get("/servers").get_data(as_text=True)
+    assert "credit-box-empty" in body          # zero balance reads as empty
+    assert ">0<" in body
+
+    give_credits(app, PAYER, 1)
+    body = client.get("/servers").get_data(as_text=True)
+    assert "credit-box-empty" not in body
+    assert ">credit<" in body                  # singular at exactly one
+
+
+def test_the_box_links_to_the_credits_page(client, signed_in, app):
+    give_credits(app, PAYER, 3)
+    body = client.get("/servers").get_data(as_text=True)
+    assert 'class="credit-box' in body and 'href="/credits"' in body
+
+
+def test_anonymous_visitors_get_no_credit_box_and_no_query(client, monkeypatch):
+    """The landing page must do no database work for a visitor who has no account."""
+    from app import credits as credits_module
+
+    def boom(*a, **k):
+        raise AssertionError("anonymous pages must not read the ledger")
+    monkeypatch.setattr(credits_module, "available_credits", boom)
+
+    body = client.get("/").get_data(as_text=True)
+    assert "credit-box" not in body
+
+
+def test_the_404_page_renders_for_a_signed_in_user(client, signed_in):
+    """The context processor runs on error pages too, so it must not blow up there."""
+    resp = client.get("/no-such-page")
+    assert resp.status_code == 404
+    assert 'data-screen="not-found"' in resp.get_data(as_text=True)

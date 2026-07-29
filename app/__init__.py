@@ -51,6 +51,20 @@ def create_app(config_object: type[Config] = Config) -> Flask:
     def inject_current_user():
         return {"current_user": current_user()}
 
+    # Credit balance for the header box, on every page. Skipped entirely for anonymous
+    # visitors so the landing page and error pages do no database work.
+    #
+    # Routes that need the number for their own logic (`can_extend`, `balance < 1`) still
+    # compute it themselves. That is the same function in the same request, so the two
+    # cannot disagree — it is one value read twice, not two sources of truth.
+    @app.context_processor
+    def inject_credit_balance():
+        user = current_user()
+        if not user:
+            return {"credit_balance": None}
+        from .credits import available_credits
+        return {"credit_balance": available_credits(user["steam_id"])}
+
     # One time format across the scrims screens: UTC server-side, rewritten to the
     # viewer's timezone in the browser. Plus relative ages.
     app.jinja_env.filters["local_dt"] = local_dt
