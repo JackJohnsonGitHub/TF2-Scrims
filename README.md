@@ -27,8 +27,11 @@ and managed over RCON from the web console.
 **Free to schedule, paid to play on.** The core loop: *sign in with Steam → link RGL →
 find or arrange a scrim (free) → optionally trade keys to the operator for credits →
 spend a credit on that scrim → a real, joinable, RCON-manageable server on `mke`, bound to
-that scrim and reclaimed when its time is up.* Team authority comes from RGL membership; the owner of a
-granted server is the individual captain. Explicitly **out of scope for now:** in-app or
+that scrim and reclaimed when its time is up.* Team authority comes from RGL membership. **Both teams
+in a scrim can see and join its server** — a match has two sides and both have to get on — while only
+the **RGL-designated leaders of the team that organised it** can change its settings or run commands.
+Paying and controlling are separate: if the claiming team buys the server, the organising team's
+leaders still hold control. Explicitly **out of scope for now:** in-app or
 automated payment processing, recurring/hourly billing, in-app role hierarchies beyond RGL
 membership, SLAs, multi-region, non-TF2 games. DDoS resilience and Steam GSLT for public
 listing **are** in scope since servers are publicly reachable (see the constitution).

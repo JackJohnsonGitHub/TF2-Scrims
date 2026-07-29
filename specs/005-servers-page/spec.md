@@ -316,8 +316,11 @@ grows and the balance falls by one.
 
 **Access and visibility**
 
-- **FR-001**: The page MUST show only servers the viewer owns or that are bound to an RGL team the
-  viewer belongs to, re-checked against stored memberships on every request.
+- **FR-001**: The page MUST show only servers the viewer owns, that are bound to an RGL team the
+  viewer belongs to, **or that belong to a scrim either of whose teams the viewer is on** — a match has
+  two sides and both must be able to join. Re-checked against stored memberships on every request.
+  *Amended after implementation (constitution v4.0.0):* originally limited to the bound team, which
+  left a team that claimed a listing unable to see the server it was going to play on.
 - **FR-002**: A server the viewer may not access MUST be indistinguishable from one that does not
   exist.
 - **FR-003**: The page MUST require a signed-in, Steam-verified identity.
@@ -334,7 +337,8 @@ grows and the balance falls by one.
 - **FR-007** *[sim]*: When live state cannot be determined, the page MUST say so rather than
   reporting the server as stopped.
 - **FR-008** *[sim]*: For a running server, the page MUST display everything the viewer's team needs
-  to connect — address, and join password if one is set.
+  to connect, to **both** teams in the scrim — as a single pasteable console command including the
+  join password when one is set, not an address and a password to copy separately.
 - **FR-009**: The page MUST NEVER display the administrative (RCON) password to any viewer.
 - **FR-010**: A server bound to a scrim MUST name that scrim, its scheduled time, and when the server
   will be reclaimed.
@@ -381,8 +385,13 @@ grows and the balance falls by one.
   server and see the server's actual response.
 - **FR-026** *[sim]*: Administrative commands MUST be unavailable, with the reason stated, when the
   server is not running.
-- **FR-027**: The page MUST distinguish controls available to the server's owner from those available
-  to other members of its team.
+- **FR-027**: The page MUST distinguish who may **join** a server from who may **control** it.
+  Configuration, administrative commands and extensions are restricted to RGL-designated leaders of
+  the team that proposed the scrim or posted the listing, re-checked server-side; everyone on either
+  team gets the connect details and nothing else. Where the organising team's roster is unknown,
+  control falls back to the paying account rather than leaving the server uncontrollable.
+  *Amended after implementation (constitution v4.0.0):* previously owner-versus-team, which put
+  control with whoever paid.
 - **FR-028**: A per-scrim server MUST offer only the settings meaningful for a short-lived match
   server.
 
