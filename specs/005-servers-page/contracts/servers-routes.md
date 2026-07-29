@@ -80,6 +80,19 @@ redirects the browser to the operator's trade URL (never rendering that URL's to
 The balance and ledger view (FR-059, FR-068, SC-011). Every grant, reserve, release, spend and
 extension with its cause. Read-only.
 
+Also annotates each payment whose target scrim is no longer applicable — cancelled, declined, or
+already past (FR-020). The payment itself stays valid: credits are not scrim-bound, so a stale
+target costs the payer nothing, and they are told the credits can be spent elsewhere.
+
+### `POST /credits/cancel/<payment_id>`
+
+Abandon a payment that was started but never sent, so the one-at-a-time rule in
+`/credits/trade/start` does not strand the user.
+
+Only valid while **no Steam offer has been attached**. Once an offer exists, Steam's state decides
+the outcome; letting a user overwrite that would be a way to disown a trade the operator already
+accepted.
+
 ### `POST /servers/<id>/extend`
 
 Buys `EXTENSION_MINUTES` for 1 credit (FR-063).
@@ -108,7 +121,7 @@ Three existing scrim routes gain one optional field, `use_credits` (FR-052).
 
 | Route | Change |
 |---|---|
-| `POST /scrims/new` (propose) | Optional `use_credits`. |
+| `POST /scrims/propose` (propose) | Optional `use_credits`. The form itself is `GET /scrims/new`. |
 | `POST /scrims/listings/new` (post a listing) | Optional `use_credits`. |
 | `POST /scrims/<id>/claim` (claim a listing) | Optional `use_credits`. |
 
@@ -146,6 +159,11 @@ Records or replaces the viewer's trade URL (FR-044), rendered beneath RGL linkin
 - Rejects a link whose `partner` does not resolve to the signed-in SteamID64 — otherwise the escrow
   pre-check would answer about somebody else.
 - States why the link is wanted: the escrow pre-check and any return of items (FR-045).
+
+### `POST /account/trade-link/delete`
+
+Removes the stored trade link. Payment then refuses at its first precondition until a new one is
+saved, because the escrow pre-check has no token to work with.
 
 ---
 
@@ -193,8 +211,10 @@ Idempotent — safe to run repeatedly and after a missed interval.
 | POST | `/scrims/<id>/server/attach` | new |
 | GET | `/credits` | new |
 | POST | `/credits/trade/start` | new |
+| POST | `/credits/cancel/<payment_id>` | new |
 | POST | `/account/trade-link` | new |
-| POST | `/scrims/new` | `use_credits` added |
+| POST | `/account/trade-link/delete` | new |
+| POST | `/scrims/propose` | `use_credits` added |
 | POST | `/scrims/listings/new` | `use_credits` added |
 | POST | `/scrims/<id>/claim` | `use_credits` added |
 | GET | `/scrims/<id>` | server state + extend added |

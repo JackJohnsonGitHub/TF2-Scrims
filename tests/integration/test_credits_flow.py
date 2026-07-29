@@ -379,3 +379,112 @@ def test_a_teammate_who_is_not_the_owner_cannot_extend(client, app, login, link_
     body = client.get(f"/servers/{server_id}").get_data(as_text=True)
     assert "Extend 30 min" not in body
     assert client.post(f"/servers/{server_id}/extend").status_code == 404
+
+
+# --- FR-020: a target scrim that will not happen ------------------------------------
+
+def _scrim(app, steam_id, status="open", days=2):
+    from app.db import get_db
+    now = datetime.now(timezone.utc)
+    with app.test_request_context():
+        db = get_db()
+        cur = db.execute(
+            """INSERT INTO scrims (format, scheduled_at, origin, proposer_team_id,
+                                   status, created_by, created_at, updated_at)
+               VALUES ('sixes', ?, 'listing', ?, ?, ?, ?, ?)""",
+            ((now + timedelta(days=days)).isoformat(timespec="seconds"), TEAM, status,
+             steam_id, now.isoformat(timespec="seconds"),
+             now.isoformat(timespec="seconds")))
+        db.commit()
+        return cur.lastrowid
+
+
+def _start_for_scrim(client, monkeypatch, scrim_id):
+    mock_steam(monkeypatch)
+    client.post("/account/trade-link", data={"trade_url": TRADE_URL})
+    return client.post("/credits/trade/start", data={"scrim_id": scrim_id})
+
+
+def test_a_live_target_scrim_produces_no_warning(client, signed_in, app, monkeypatch):
+    scrim_id = _scrim(app, PAYER)
+    _start_for_scrim(client, monkeypatch, scrim_id)
+
+    body = client.get("/credits").get_data(as_text=True)
+    assert "called off" not in body
+    assert "already started" not in body
+
+
+def test_a_cancelled_target_scrim_is_reported_without_killing_the_payment(
+        client, signed_in, app, monkeypatch):
+    """FR-020. The scrim is gone; the payment is not. Credits are not scrim-bound, so
+    telling the payer their payment died with the scrim would be wrong and alarming."""
+    from app.db import get_db
+    scrim_id = _scrim(app, PAYER)
+    _start_for_scrim(client, monkeypatch, scrim_id)
+
+    with app.test_request_context():
+        get_db().execute("UPDATE scrims SET status = 'cancelled' WHERE id = ?", (scrim_id,))
+        get_db().commit()
+
+    body = client.get("/credits").get_data(as_text=True)
+    assert "has been called off" in body
+    assert "still arrive" in body                    # the payment stands
+
+    with app.test_request_context():
+        assert payments.open_payment(PAYER)["state"] == payments.STARTED
+
+
+def test_a_past_target_scrim_is_reported(client, signed_in, app, monkeypatch):
+    from app.db import get_db
+    scrim_id = _scrim(app, PAYER)
+    _start_for_scrim(client, monkeypatch, scrim_id)
+
+    with app.test_request_context():
+        past = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat(timespec="seconds")
+        get_db().execute("UPDATE scrims SET scheduled_at = ? WHERE id = ?", (past, scrim_id))
+        get_db().commit()
+
+    assert "has already started" in client.get("/credits").get_data(as_text=True)
+
+
+def test_a_stale_target_still_credits_normally(client, signed_in, app, monkeypatch):
+    """The whole point of the amendment: the credits land regardless."""
+    from app.db import get_db
+    scrim_id = _scrim(app, PAYER)
+    mock_steam(monkeypatch, offers=[offer(keys=2)])
+    client.post("/account/trade-link", data={"trade_url": TRADE_URL})
+    client.post("/credits/trade/start", data={"scrim_id": scrim_id})
+
+    with app.test_request_context():
+        get_db().execute("UPDATE scrims SET status = 'cancelled' WHERE id = ?", (scrim_id,))
+        get_db().commit()
+
+    app.test_cli_runner().invoke(args=["poll-payments"])
+    with app.test_request_context():
+        assert credits.available_credits(PAYER) == 5
+
+
+def test_a_payment_with_no_target_scrim_is_never_flagged(client, signed_in, monkeypatch):
+    start_a_payment(client, monkeypatch)
+    body = client.get("/credits").get_data(as_text=True)
+    assert "no longer exists" not in body
+    assert "called off" not in body
+
+
+def test_a_payment_is_not_visible_to_a_teammate(client, app, login, link_team,
+                                                monkeypatch):
+    """FR-018 as amended: a payment belongs to the account that made it. What a team
+    needs to see is the server it produces, not its captain's payment record."""
+    signed = login(PAYER, "Payer")
+    link_team(signed, [rgl_team(TEAM, "Alpha", "ALP", "sixes")])
+    app.config["STEAM_API_KEY"] = "test-key"
+    app.config["OPERATOR_TRADE_URL"] = (
+        "https://steamcommunity.com/tradeoffer/new/?partner=1&token=operator")
+    start_a_payment(client, monkeypatch)
+
+    mate = login("76561198000000888", "Teammate")
+    link_team(mate, [rgl_team(TEAM, "Alpha", "ALP", "sixes")])
+
+    body = client.get("/credits").get_data(as_text=True)
+    assert "payment in progress" not in body
+    assert "Start trade offer" not in body or "trade URL" in body

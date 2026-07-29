@@ -67,6 +67,15 @@ increment and only become fully real once provisioning lands.
   own page as well as the Servers page.
 - Q: What is shown to a user with no credits? → A: No credit-spending action at all — not a disabled
   one, not one that fails on submit. The route to buying credits is shown in its place.
+
+### Session 2026-07-29 (post-implementation, from `/speckit-analyze`)
+
+- Q: Is a payment visible to the payer's whole team, or only to the payer? → A: **Only the payer.**
+  FR-018 amended. The original team-visible wording conflicted with FR-070 and FR-047, and the thing a
+  team needs is the server, not its captain's payment record.
+- Q: Does a cancelled or past target scrim invalidate the payment it was started for? → A: **No.**
+  Credits are fungible and not scrim-bound, so the payment completes and the credits land; only the
+  link to that scrim is reported as no longer applicable. FR-020 clarified accordingly.
 - Q: Where does a user ask for a server? → A: Primarily while scheduling — the propose-a-scrim and
   post-a-listing forms each offer to have a server started when the scrim begins. The Servers page
   remains a second path for attaching one to an already-scheduled scrim. Scheduling itself is never
@@ -343,11 +352,18 @@ grows and the balance falls by one.
   pending request as candidates for a request.
 - **FR-017**: The platform MUST reject a second request for a scrim that already has a pending or
   approved one, and point the requester at the existing request.
-- **FR-018**: A submitted request MUST be visible to every member of the requesting team, with its
-  state, the scrim it is for, who asked, and when.
+- **FR-018**: A submitted payment MUST be visible to **the account that made it**, with its state,
+  the scrim it was for, and when. It MUST NOT be shown to other members of that account's teams.
+  *Amended after implementation:* the original wording made payments team-visible, which contradicted
+  FR-070 (credits belong to the paying account) and FR-047 (a trade link is visible only to its owner
+  and the operator). A payment is a personal financial act; what the team actually needs to see is the
+  **server** it produces, and FR-001 already makes that team-visible.
 - **FR-019**: A request MUST display its current state — awaiting payment, payment held, entitled and
   scheduled, or failed with the reason — without the requester contacting the operator.
-- **FR-020**: A request whose scrim is cancelled or has passed MUST be shown as no longer applicable.
+- **FR-020**: A payment whose target scrim has been cancelled, declined, or already passed MUST be
+  shown as no longer applicable to that scrim. The **payment itself remains valid** — credits are not
+  bound to a scrim, so a stale target costs the payer nothing, and they MUST be told the credits can
+  be spent on something else.
 - **FR-021**: The platform MUST NOT collect, process, or store card or bank details anywhere, and MUST
   NOT move money itself; payment is completed on the payment provider's own surface — for the first
   method, Steam. A user's trade link is an account identifier, not a financial instrument, and storing

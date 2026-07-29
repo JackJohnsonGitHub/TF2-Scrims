@@ -38,6 +38,11 @@
   {% if open_payment %}
   <p><strong>You have a payment in progress.</strong></p>
   <div class="rail-item">
+    {% if open_payment.target_note %}
+    {# FR-020: the scrim is gone, the payment isn't. Say both, in that order. #}
+    <span class="rail-meta"><strong>{{ open_payment.target_note }}</strong>
+      Your credits will still arrive and can be spent on any scrim.</span>
+    {% endif %}
     <span class="rail-meta">
       Started {{ open_payment.created_at | local_dt }} ·
       {% if open_payment.state == 'held' %}
@@ -81,7 +86,10 @@
       {% for p in payments %}
       <tr>
         <td>{{ p.created_at | local_dt }}</td>
-        <td>{{ p.state_label }}{% if p.state_reason %}<br><span class="rail-meta">{{ p.state_reason }}</span>{% endif %}</td>
+        <td>{{ p.state_label }}
+          {% if p.state_reason %}<br><span class="rail-meta">{{ p.state_reason }}</span>{% endif %}
+          {% if p.target_note %}<br><span class="rail-meta">{{ p.target_note }}
+            The credits are unaffected.</span>{% endif %}</td>
         <td>{{ p.items_received if p.items_received is not none else "—" }}</td>
         <td>{{ p.credits_granted or "—" }}</td>
       </tr>

@@ -120,20 +120,55 @@ def delete_trade_link(steam_id: str) -> None:
 
 def open_payment(steam_id: str) -> dict | None:
     row = get_db().execute(
-        """SELECT * FROM payments WHERE steam_id = ? AND state IN (?, ?)
-           ORDER BY id DESC LIMIT 1""",
+        f"""{_SELECT_WITH_TARGET} WHERE p.steam_id = ? AND p.state IN (?, ?)
+            ORDER BY p.id DESC LIMIT 1""",
         (steam_id, STARTED, HELD),
     ).fetchone()
-    return dict(row) if row else None
+    return _annotate(row) if row else None
+
+
+"""SQL for a payment plus the state of the scrim it was started for, if any. The join is
+what lets FR-020 report a stale target without a second query per row."""
+_SELECT_WITH_TARGET = """
+    SELECT p.*, s.status AS target_status, s.scheduled_at AS target_scheduled_at
+    FROM payments p LEFT JOIN scrims s ON s.id = p.target_scrim_id
+"""
+
+# Scrim statuses that mean the match this payment was for will not happen.
+_DEAD_SCRIM_STATUSES = ("cancelled", "declined")
+
+
+def _annotate(row) -> dict:
+    """Decorate a payment row with its label and, per FR-020, whether the scrim it was
+    started for still applies.
+
+    A stale target does **not** invalidate the payment. Credits are fungible and not
+    bound to a scrim, so the trade still completes and the credits still land — telling
+    the payer their payment died with the scrim would be both wrong and alarming.
+    """
+    payment = dict(row)
+    payment["state_label"] = STATE_LABELS.get(payment["state"], payment["state"])
+    payment["target_note"] = None
+
+    if payment.get("target_scrim_id"):
+        status = payment.get("target_status")
+        scheduled = payment.get("target_scheduled_at")
+        if status is None:
+            payment["target_note"] = "The scrim this was for no longer exists."
+        elif status in _DEAD_SCRIM_STATUSES:
+            payment["target_note"] = "The scrim this was for has been called off."
+        elif scheduled and scheduled <= utc_now():
+            payment["target_note"] = "The scrim this was for has already started."
+
+    return payment
 
 
 def recent_payments(steam_id: str, limit: int = 20) -> list[dict]:
     rows = get_db().execute(
-        "SELECT * FROM payments WHERE steam_id = ? ORDER BY id DESC LIMIT ?",
+        f"{_SELECT_WITH_TARGET} WHERE p.steam_id = ? ORDER BY p.id DESC LIMIT ?",
         (steam_id, limit),
     ).fetchall()
-    return [{**dict(r), "state_label": STATE_LABELS.get(r["state"], r["state"])}
-            for r in rows]
+    return [_annotate(r) for r in rows]
 
 
 def price_summary() -> dict:
