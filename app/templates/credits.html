@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+{% block title %}Credits · TF2 Hosting{% endblock %}
+{% block screen %}credits{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <h1>Credits</h1>
+</div>
+
+<div class="stat-row">
+  <div class="stat">
+    <span class="stat-num">{{ balance }}</span>
+    <span class="stat-label">Credits available</span>
+  </div>
+  <div class="stat">
+    <span class="stat-num">{{ balance * price.credit_minutes // 60 }}h</span>
+    <span class="stat-label">Server time</span>
+  </div>
+</div>
+
+<section class="card">
+  <h2>What it costs</h2>
+  {# FR-033 / FR-071: the whole price, stated before anyone sends anything. #}
+  <ul>
+    <li><strong>{{ price.min_keys }} × {{ price.item }}</strong> → {{ price.credits_for_min }} credits</li>
+    <li><strong>1 credit</strong> → {{ price.credit_minutes }} minutes of server time</li>
+    <li><strong>Extending</strong> → 1 credit per {{ price.extension_minutes }} minutes</li>
+    <li>If a match runs long, there's a free {{ price.grace_minutes }}-minute grace
+        period before the server stops — once per server.</li>
+  </ul>
+  <p class="muted">Scheduling scrims is free and always will be. Credits only pay for
+    somewhere to play.</p>
+</section>
+
+<section class="card">
+  <h2>Buy credits</h2>
+
+  {% if open_payment %}
+  <p><strong>You have a payment in progress.</strong></p>
+  <div class="rail-item">
+    <span class="rail-meta">
+      Started {{ open_payment.created_at | local_dt }} ·
+      {% if open_payment.state == 'held' %}
+        Steam is holding this trade
+        {% if open_payment.hold_until %}until {{ open_payment.hold_until | local_dt }}
+        {% else %}— we don't know for how long{% endif %}.
+        Credits arrive when the hold clears.
+      {% else %}
+        Send {{ open_payment.items_expected }} × {{ price.item }} to the operator.
+        Credits arrive once the trade is accepted.
+      {% endif %}
+    </span>
+    <form method="post" action="{{ url_for('credits.cancel', payment_id=open_payment.id) }}">
+      <input type="hidden" name="next" value="{{ request.full_path.rstrip('?') }}">
+      <button class="btn btn-sm" type="submit">I didn't send it — cancel</button>
+    </form>
+  </div>
+
+  {% elif can_pay.ok %}
+  <p>Start a trade offer to the operator with
+     <strong>{{ price.min_keys }} × {{ price.item }}</strong> in it.</p>
+  <form method="post" action="{{ url_for('credits.start_trade') }}">
+    <button class="btn btn-primary" type="submit">Start trade offer</button>
+  </form>
+
+  {% else %}
+  {# Never a silently missing button: say what's wrong and where to fix it. #}
+  <p class="err">{{ can_pay.reason }}</p>
+  {% if can_pay.fix == 'account' %}
+  <p><a class="btn btn-primary" href="{{ url_for('rgl.account') }}">Add your trade link</a></p>
+  {% endif %}
+  {% endif %}
+</section>
+
+{% if payments %}
+<section class="card">
+  <h2>Payments</h2>
+  <table class="table">
+    <thead><tr><th>Started</th><th>State</th><th>Sent</th><th>Credits</th></tr></thead>
+    <tbody>
+      {% for p in payments %}
+      <tr>
+        <td>{{ p.created_at | local_dt }}</td>
+        <td>{{ p.state_label }}{% if p.state_reason %}<br><span class="rail-meta">{{ p.state_reason }}</span>{% endif %}</td>
+        <td>{{ p.items_received if p.items_received is not none else "—" }}</td>
+        <td>{{ p.credits_granted or "—" }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+
+<section class="card">
+  <h2>Ledger</h2>
+  {# SC-011: every movement, with its cause, so a disputed balance needs no operator. #}
+  {% if ledger %}
+  <table class="table">
+    <thead><tr><th>When</th><th>Change</th><th>What</th><th>Why</th></tr></thead>
+    <tbody>
+      {% for row in ledger %}
+      <tr>
+        <td>{{ row.created_at | local_dt }}</td>
+        <td>{{ "+" if row.delta > 0 else "" }}{{ row.delta }}</td>
+        <td>{{ row.kind_label }}</td>
+        <td>{{ row.cause }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">Nothing yet — your ledger will show every credit you buy, reserve,
+    spend or get back.</p>
+  {% endif %}
+</section>
+{% endblock %}

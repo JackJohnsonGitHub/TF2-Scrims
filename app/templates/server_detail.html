@@ -38,8 +38,30 @@
 {# The window is spent; this is the unpaid buffer, so make the deadline unmissable. #}
 <div class="demo-banner">
   <strong>Overtime.</strong> This server's paid time has run out and it is running on a
-  {{ server.grace_remaining if server.grace_remaining is not none else 0 }}-minute
-  grace period. Extend it to keep playing — otherwise it stops when the grace ends.
+  free grace period with
+  {{ server.grace_remaining if server.grace_remaining is not none else 0 }} minute(s)
+  left. Extend it to keep playing — otherwise it stops when the grace ends.
+</div>
+{% elif server.is_live and server.minutes_remaining is not none %}
+<p class="muted">{{ server.minutes_remaining }} minutes of paid time left.</p>
+{% endif %}
+
+{% if is_owner and server.is_live %}
+<div class="form-actions">
+  {% if can_extend %}
+  {# Cost and duration stated before committing (FR-081). No Steam call in this path,
+     which is what makes it fast enough to do mid-match. #}
+  <form method="post" action="{{ url_for('servers.extend', server_id=server.id) }}">
+    <input type="hidden" name="next" value="{{ request.full_path.rstrip('?') }}">
+    <button class="btn btn-primary" type="submit">
+      Extend {{ price.extension_minutes }} min — 1 credit</button>
+  </form>
+  <span class="muted">You have {{ balance }} credit(s).</span>
+  {% else %}
+  {# FR-065: no action that would fail. The way to fix it, instead. #}
+  <span class="muted">No credits left, so there's nothing to extend with.</span>
+  <a class="btn btn-primary" href="{{ url_for('credits.index') }}">Buy credits</a>
+  {% endif %}
 </div>
 {% endif %}
 

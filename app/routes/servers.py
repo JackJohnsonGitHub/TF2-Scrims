@@ -11,7 +11,11 @@ indistinguishable from a nonexistent one, so it 404s rather than 403s.
 from flask import (Blueprint, abort, flash, redirect, render_template, request,
                    url_for)
 
+from flask import current_app
+
+from .. import credits
 from .. import servers_store as store
+from ..credits import InsufficientCredits
 from ..models import validate_server_settings
 from ..rgl_store import get_user_teams
 from ..security import current_user, login_required, safe_next
@@ -54,11 +58,22 @@ def _view(server: dict) -> dict:
 def list_servers():
     steam_id, team_ids = _viewer()
     servers = [_view(s) for s in store.accessible_servers(steam_id, team_ids)]
+    balance = credits.available_credits(steam_id)
     return render_template(
         "servers_list.html",
         servers=servers,
         linked=bool(team_ids),
+        balance=balance,
+        # FR-065: an action the balance cannot cover is not rendered at all, and the
+        # route to buying credits appears in its place.
+        can_extend=balance >= 1,
+        price=_price(),
     )
+
+
+def _price() -> dict:
+    from .. import payments
+    return payments.price_summary()
 
 
 @bp.get("/servers/<int:server_id>")
@@ -66,13 +81,57 @@ def list_servers():
 def server_detail(server_id):
     steam_id, _team_ids = _viewer()
     server = _server_or_404(server_id)
+    balance = credits.available_credits(steam_id)
     return render_template(
         "server_detail.html",
         server=_view(server),
         is_owner=store.is_owner(server, steam_id),
+        balance=balance,
+        can_extend=balance >= 1,
+        price=_price(),
         errors={},
         console_output=[],
     )
+
+
+@bp.post("/servers/<int:server_id>/extend")
+@login_required
+def extend(server_id):
+    """Buy more time on a running server.
+
+    Does no network I/O on purpose. This is the mid-match path — twelve people are
+    waiting — so it is a local ledger write and a timestamp bump, nothing else.
+    """
+    steam_id, _team_ids = _viewer()
+    server = _server_or_404(server_id)
+    if not store.is_owner(server, steam_id):
+        abort(404)
+    if server["state"] not in (store.RUNNING, store.IN_GRACE):
+        flash("That server is not running, so there is no time to extend.", "info")
+        return redirect(_back(server_id))
+
+    minutes = current_app.config["EXTENSION_MINUTES"]
+    try:
+        # Re-checked server-side even though the button is hidden without a balance —
+        # an un-rendered action is not a security control.
+        credits.spend_extension(
+            steam_id, f"+{minutes} min on {server['name']}", server_id=server_id)
+    except InsufficientCredits as exc:
+        flash(str(exc), "error")
+        return redirect(url_for("credits.index"))
+
+    store.extend_window(server_id, minutes)
+    if server["state"] == store.IN_GRACE:
+        # Back to running: the window now ends in the future, and nobody playing
+        # noticed a thing.
+        store.set_state(server_id, store.RUNNING)
+    flash(f"Added {minutes} minutes.", "info")
+    return redirect(_back(server_id))
+
+
+def _back(server_id):
+    return (safe_next(request.form.get("next"))
+            or url_for("servers.server_detail", server_id=server_id))
 
 
 @bp.post("/servers/<int:server_id>/settings")

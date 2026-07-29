@@ -64,4 +64,37 @@
     </div>
   {% endif %}
 </section>
+
+<section class="card">
+  <h2>Steam trade link</h2>
+  {# Not decoration: the token inside this URL is what lets us ask Steam whether a
+     trade from you would be held in escrow. Without it we can't check, so we can't
+     responsibly take your payment. #}
+  <p class="muted">Needed before you can buy credits. We use it to check that Steam
+    won't hold your trade for 15 days, and it's how items would be returned to you.
+    Find it under <em>Inventory → Trade Offers → Who can send me Trade Offers</em>.</p>
+
+  {% if trade_error %}<p class="err">{{ trade_error }}</p>{% endif %}
+
+  <form class="form" method="post" action="{{ url_for('rgl.save_trade_link') }}">
+    <label class="field">
+      <span>Your trade URL</span>
+      <input type="text" name="trade_url" autocomplete="off"
+             placeholder="https://steamcommunity.com/tradeoffer/new/?partner=...&amp;token=..."
+             value="{{ trade_link.trade_url if trade_link else '' }}">
+    </label>
+    <div class="form-actions">
+      <button class="btn btn-primary" type="submit">
+        {{ "Update trade link" if trade_link else "Save trade link" }}</button>
+    </div>
+  </form>
+
+  {% if trade_link %}
+  <p class="muted">Saved {{ trade_link.updated_at | local_dt }}. Only you and the
+    operator can see it.</p>
+  <form method="post" action="{{ url_for('rgl.delete_trade_link') }}">
+    <button class="btn btn-sm" type="submit">Remove</button>
+  </form>
+  {% endif %}
+</section>
 {% endblock %}

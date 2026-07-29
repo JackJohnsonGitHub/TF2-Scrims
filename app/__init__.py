@@ -29,6 +29,7 @@ def create_app(config_object: type[Config] = Config) -> Flask:
     from .routes.auth import bp as auth_bp
     from .routes.rgl import bp as rgl_bp
     from .routes.scrims import bp as scrims_bp
+    from .routes.credits import bp as credits_bp
 
     app.register_blueprint(health_bp)
     app.register_blueprint(auth_bp)
@@ -37,6 +38,13 @@ def create_app(config_object: type[Config] = Config) -> Flask:
     app.register_blueprint(console_bp)
     app.register_blueprint(rgl_bp)
     app.register_blueprint(scrims_bp)
+    app.register_blueprint(credits_bp)
+
+    # CronJob-driven commands: payment polling and runtime-window expiry. Registered as
+    # CLI commands rather than an in-process scheduler, because Gunicorn's two workers
+    # would each run their own copy and race on crediting the same trade.
+    from .cli import register as register_cli
+    register_cli(app)
 
     # Expose the signed-in user to every template (header identity).
     @app.context_processor

@@ -1,12 +1,18 @@
-"""Account area: RGL link status + link/refresh/unlink actions.
+"""Account area: RGL link status, link/refresh/unlink, and the Steam trade link.
 
 The RGL profile is always fetched for the *session's* SteamID (FR-002) — no RGL
 id or URL is ever accepted from the form. An `unavailable` outcome leaves any
 previously stored link untouched (FR-006 / SC-008).
-"""
-from flask import Blueprint, flash, redirect, render_template, url_for
 
-from .. import rgl
+The Steam trade link lives here too (feature 005). This blueprint owns `GET /account`
+and the template it renders, and its `rgl.account` endpoint is referenced from six
+places including the main nav — renaming that to purify a blueprint boundary would be
+churn for nothing.
+"""
+from flask import (Blueprint, flash, redirect, render_template, request, url_for)
+
+from .. import payments, rgl
+from ..payments import PaymentError
 from ..rgl_store import get_link, get_user_teams, save_link, unlink
 from ..security import current_user, login_required
 
@@ -28,7 +34,35 @@ def account():
         link=get_link(steam_id),
         teams_by_format=teams_by_format,
         format_labels=FORMAT_LABELS,
+        trade_link=payments.get_trade_link(steam_id),
+        trade_error=request.args.get("trade_error"),
     )
+
+
+@bp.post("/account/trade-link")
+@login_required
+def save_trade_link():
+    """Record the viewer's own Steam trade URL.
+
+    Not cosmetic: the token inside that URL is what `GetTradeHoldDurations` needs, so
+    without it we cannot tell whether a trade from this user would sit in escrow for
+    15 days — and therefore cannot responsibly let them pay.
+    """
+    steam_id = current_user()["steam_id"]
+    try:
+        payments.save_trade_link(steam_id, request.form.get("trade_url", ""))
+    except PaymentError as exc:
+        return redirect(url_for("rgl.account", trade_error=str(exc)))
+    flash("Trade link saved.", "info")
+    return redirect(url_for("rgl.account"))
+
+
+@bp.post("/account/trade-link/delete")
+@login_required
+def delete_trade_link():
+    payments.delete_trade_link(current_user()["steam_id"])
+    flash("Trade link removed.", "info")
+    return redirect(url_for("rgl.account"))
 
 
 def _fetch_and_store(steam_id: str) -> None:

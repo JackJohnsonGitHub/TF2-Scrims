@@ -5,6 +5,9 @@
 {% block content %}
 <div class="page-head">
   <h1>Servers</h1>
+  {% if linked %}
+  <a class="btn" href="{{ url_for('credits.index') }}">{{ balance }} credit(s)</a>
+  {% endif %}
 </div>
 
 {% if not linked %}
@@ -62,7 +65,11 @@
   <p><strong>Scheduling scrims is free, always.</strong> Servers are the paid part —
      you buy credits and spend them on a scrim you've scheduled.</p>
   <p class="muted">A server is never created on demand: credits are granted once the
-     operator has your payment, and a scrim can then have a server started for it.</p>
+     operator has your payment, and a scrim can then have a server started for it.
+     {{ price.min_keys }} × {{ price.item }} buys {{ price.credits_for_min }} credits,
+     and 1 credit runs a server for {{ price.credit_minutes }} minutes.</p>
+  <p><a class="btn btn-primary" href="{{ url_for('credits.index') }}">
+    {% if balance %}Spend your credits{% else %}Buy credits{% endif %}</a></p>
 </div>
 {% endif %}
 {% endif %}
