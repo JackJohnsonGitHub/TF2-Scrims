@@ -115,6 +115,7 @@ def decline(actor: str, scrim_id: int) -> None:
         raise ScrimError("Only a pending proposal can be declined.")
     _require_member(actor, scrim["opponent_team_id"])
     _set_status(scrim_id, "declined")
+    _release_server_credit(scrim_id)
 
 
 def withdraw(actor: str, scrim_id: int) -> None:
@@ -123,6 +124,7 @@ def withdraw(actor: str, scrim_id: int) -> None:
         raise ScrimError("Only a pending proposal can be withdrawn.")
     _require_member(actor, scrim["proposer_team_id"])
     _set_status(scrim_id, "cancelled")
+    _release_server_credit(scrim_id)
 
 
 def cancel(actor: str, scrim_id: int) -> None:
@@ -134,6 +136,17 @@ def cancel(actor: str, scrim_id: int) -> None:
             or (scrim["opponent_team_id"] and is_member(actor, scrim["opponent_team_id"]))):
         raise ScrimForbidden()
     _set_status(scrim_id, "cancelled")
+    _release_server_credit(scrim_id)
+
+
+def _release_server_credit(scrim_id: int) -> None:
+    """A scrim that will not happen must not cost its team a credit (FR-056, FR-057).
+
+    Imported lazily: servers_store imports credits, which would otherwise make a cycle
+    with this module.
+    """
+    from . import servers_store
+    servers_store.release_if_unstarted(scrim_id)
 
 
 # --- Open listings (US3) ---
@@ -179,6 +192,7 @@ def cancel_listing(actor: str, scrim_id: int) -> None:
         raise ScrimError("Only an open listing can be cancelled.")
     _require_member(actor, scrim["proposer_team_id"])
     _set_status(scrim_id, "cancelled")
+    _release_server_credit(scrim_id)
 
 
 # --- Queries (FR-014) ---

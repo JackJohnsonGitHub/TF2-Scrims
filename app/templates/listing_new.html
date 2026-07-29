@@ -28,6 +28,19 @@
       <label for="notes">Notes (optional)</label>
       <input type="text" id="notes" name="notes" maxlength="200" placeholder="e.g. maps, server preferences">
     </div>
+    {% if can_use_credits %}
+    {# FR-052: choosing a server is part of scheduling. Rendered only when the balance
+       can cover it — an action that would fail is not offered (FR-065). #}
+    <label class="field">
+      <input type="checkbox" name="use_credits" value="1">
+      <span>Start a server for this scrim — 1 credit ({{ credit_minutes }} min).
+        You have {{ balance }}.</span>
+    </label>
+    {% else %}
+    <p class="muted">Want a server for this?
+      <a href="{{ url_for('credits.index') }}">Buy credits</a> — scheduling itself is
+      free either way.</p>
+    {% endif %}
     <button class="btn btn-primary" type="submit">Post listing</button>
   </form>
 </section>

@@ -107,27 +107,41 @@ deleted.
 | `id` | INTEGER PK | |
 | `steam_id` | TEXT NOT NULL → `users` | Whose balance (FR-070: account-level). |
 | `delta` | INTEGER NOT NULL | Signed. Positive grants, negative spends. |
-| `kind` | TEXT NOT NULL | `grant`, `reserve`, `release`, `spend`, `extend`. |
+| `kind` | TEXT NOT NULL | `grant`, `reserve`, `release`, `extend`. |
 | `cause` | TEXT NOT NULL | Human-readable, shown in the ledger UI (FR-068). |
 | `payment_id` | INTEGER → `payments` | Set for `grant`. |
 | `scrim_id` | INTEGER → `scrims` | Set for `reserve` / `release`. |
 | `server_id` | INTEGER → `servers` | Set for `spend` / `extend`. |
 | `created_at` | TEXT NOT NULL | |
 
-**Derived balances** — no cached column exists:
+**No separate `spend` kind** — corrected during implementation. An earlier draft listed one
+alongside `reserve`, but a credit leaves the available balance the moment it is *reserved*;
+subtracting again when the window opened would charge twice for the same hour. The
+reserved-versus-consumed distinction lives in the server's `state` (`scheduled` vs `running`), which
+is what decides whether a `release` is still possible. Four kinds, each moving the balance exactly
+once:
 
 ```
-granted   = SUM(delta) WHERE kind = 'grant'
-reserved  = -SUM(delta) WHERE kind = 'reserve'  -  (releases)
-available = SUM(delta) over all rows
+grant    +n   a payment completed
+reserve  -1   earmarked for a scrim's server
+release  +1   that server never ran, so the credit comes back
+extend   -1   bought more time on a running server
 ```
 
-`available` is simply `SUM(delta)`, because `reserve` and `spend` are recorded as negatives and
-`release` as a positive. This is what FR-065 gates every credit-spending action on, and what SC-011
-requires be explainable from these rows alone.
+**Derived balance** — no cached column exists:
 
-**Invariant**: `available` MUST NEVER go negative. Enforced by checking inside the same transaction
-as the insert.
+```
+available = SUM(delta) over all rows for the account
+```
+
+This is what FR-065 gates every credit-spending action on, and what SC-011 requires be explainable
+from these rows alone.
+
+**Invariant**: `available` MUST NEVER go negative. Enforced by putting the balance check *inside*
+the INSERT (`INSERT … SELECT … WHERE (SELECT SUM(delta) …) >= ?`) rather than as a preceding SELECT.
+A read-then-write would let two concurrent spends both observe the same balance and both succeed,
+and since the poller writes from a different process than Gunicorn's workers, that race is real
+rather than theoretical.
 
 ---
 

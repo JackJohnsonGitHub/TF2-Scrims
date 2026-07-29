@@ -285,6 +285,87 @@ def move_window(scrim_id, scheduled_at: str) -> None:
     get_db().commit()
 
 
+def owning_team_for(actor_steam_id: str, scrim: dict) -> int | None:
+    """Whichever side of this scrim the actor is actually on.
+
+    Not simply `proposer_team_id`: when someone claims an open listing it is the
+    *claimer* who pays, so binding the server to the poster's team would hand
+    visibility to the wrong side and hide it from the people who bought it.
+    """
+    from .rgl_store import is_member
+    for candidate in (scrim.get("proposer_team_id"), scrim.get("opponent_team_id")):
+        if candidate and is_member(actor_steam_id, candidate):
+            return candidate
+    return None
+
+
+def attach_to_scrim(actor_steam_id: str, scrim: dict, team_id: int | None = None) -> int:
+    """Reserve a credit and create a scheduled server for this scrim.
+
+    Raises `credits.InsufficientCredits` if the balance cannot cover it. Callers MUST
+    have created the scrim already and MUST NOT undo it on failure: a scheduled scrim
+    with no server is a valid, honest state, and scheduling is free (Principle I).
+    """
+    from . import credits
+
+    starts, ends = window_for(scrim["scheduled_at"])
+    label = scrim.get("proposer_name") or f"Scrim {scrim['id']}"
+    server_id = create_server(
+        owner_steam_id=actor_steam_id,
+        team_id=team_id or owning_team_for(actor_steam_id, scrim),
+        scrim_id=scrim["id"],
+        name=f"{label} — {scrim['scheduled_at'][:10]}",
+        map_name="cp_process_final",
+        max_slots=24,
+        state=SCHEDULED,
+        window_starts_at=starts,
+        window_ends_at=ends,
+    )
+    try:
+        credits.reserve(actor_steam_id, f"Server for scrim {scrim['id']}",
+                        scrim_id=scrim["id"], server_id=server_id)
+    except Exception:
+        # No credit was taken, so leave no half-attached server behind either.
+        get_db().execute("DELETE FROM servers WHERE id = ?", (server_id,))
+        get_db().commit()
+        raise
+    return server_id
+
+
+def release_if_unstarted(scrim_id) -> str | None:
+    """Give back a scrim's reserved credit if its server never ran.
+
+    Called when a scrim is cancelled, declined or withdrawn, and when a listing is
+    pulled. A team is never charged for a server it did not get (FR-067).
+    """
+    from . import credits
+
+    server = server_for_scrim(scrim_id)
+    if server is None or server["state"] not in (PENDING_PAYMENT, SCHEDULED, STARTING):
+        return None
+    set_state(server["id"], CANCELLED, stopped_reason=REASON_CANCELLED)
+    if server["state"] != PENDING_PAYMENT:
+        # PENDING_PAYMENT never reserved anything, so there is nothing to give back.
+        credits.release(server["owner_steam_id"], f"Scrim {scrim_id} called off",
+                        scrim_id=scrim_id, server_id=server["id"])
+        return "released"
+    return "cancelled"
+
+
+def mark_failed_to_place(server_id) -> None:
+    """A server the platform could not create. Returns its credit — a visible failure
+    beats a silently missing server, and beats charging for one (Principle VII)."""
+    from . import credits
+
+    server = get_server(server_id)
+    if server is None or server["state"] in TERMINAL_STATES:
+        return
+    set_state(server_id, FAILED, stopped_reason=REASON_FAILED_TO_PLACE)
+    credits.release(server["owner_steam_id"],
+                    f"Server {server_id} could not be started",
+                    scrim_id=server.get("scrim_id"), server_id=server_id)
+
+
 def servers_needing_reconcile() -> list[dict]:
     """Every server whose state could still change on the clock."""
     rows = get_db().execute(

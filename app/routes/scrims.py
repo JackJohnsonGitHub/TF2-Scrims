@@ -16,12 +16,18 @@ from ..rgl_store import (division_browser, ensure_roster, ensure_season,
                          get_team, get_user_teams, hydrate_season_teams,
                          platform_teams, season_progress, team_on_platform)
 from ..scrims import (ScrimError, accept, cancel, cancel_listing, claim,
-                      create_listing, create_proposal, decline,
+                      create_listing, create_proposal, decline, get_scrim,
                       get_scrim_for_viewer, incoming_pending, my_open_listings,
                       open_listings, outgoing_pending, upcoming_confirmed,
                       utc_now, withdraw)
 from ..security import (current_user, login_required, rgl_link_required,
                         safe_next)
+from .. import credits
+from .. import servers_store as srv
+from ..credits import InsufficientCredits
+# Same decoration the Servers page uses, so a server reads identically wherever it is
+# shown rather than growing a second formatting path here.
+from .servers import _view as srv_view
 
 bp = Blueprint("scrims", __name__)
 
@@ -53,6 +59,35 @@ def _int_field(name: str) -> int:
         return int(request.form.get(name, ""))
     except ValueError:
         raise ScrimError("Invalid team selection.")
+
+
+def _wants_server() -> bool:
+    return bool(request.form.get("use_credits"))
+
+
+def _attach_server(scrim_id: int) -> None:
+    """Best-effort server attach after a scrim already exists.
+
+    Deliberately never raises. The scrim is created first and unconditionally, and a
+    failed reservation leaves it standing with no server — a valid, honest state
+    (FR-055). Scheduling is free and must never be blocked, delayed or rolled back by
+    anything to do with payment (Principle I, FR-054, SC-014).
+    """
+    if not _wants_server():
+        return
+    row = get_scrim(scrim_id)
+    if row is None:
+        return
+    scrim = dict(row)   # sqlite3.Row has no .get()
+    try:
+        srv.attach_to_scrim(_steam_id(), scrim)
+        flash("A server will be ready when the scrim starts. 1 credit reserved.",
+              "success")
+    except InsufficientCredits as exc:
+        flash(f"Scrim scheduled, but no server attached — {exc}", "info")
+    except Exception:
+        # Never let a server problem look like a scheduling problem.
+        flash("Scrim scheduled, but the server could not be attached.", "info")
 
 
 def _back(default: str = "scrims.index", **kwargs):
@@ -133,9 +168,25 @@ def detail(scrim_id):
     attendance = None
     if is_own:
         attendance = roster_with_attendance(scrim)
+
+    # The scrim's own server, if it has one, plus whether this viewer can act on it.
+    # A scrim must be actionable from its own page — including buying it more time
+    # mid-match, which is when nobody wants to go hunting for the Servers page.
+    server = srv.server_for_scrim(scrim_id)
+    balance = credits.available_credits(steam_id)
+    can_attach = (server is None and (is_own or is_opponent)
+                  and scrim["status"] in ("pending", "confirmed", "open")
+                  and scrim["scheduled_at"] > utc_now() and balance >= 1)
     return render_template(
         "scrim_detail.html",
         scrim=scrim,
+        server=srv_view(server) if server else None,
+        balance=balance,
+        can_attach=can_attach,
+        can_extend_server=(server is not None
+                           and srv.is_owner(server, steam_id)
+                           and srv.is_live(server) and balance >= 1),
+        extension_minutes=current_app.config["EXTENSION_MINUTES"],
         roster=roster,
         roster_fetched_at=roster_fetched_at,
         claim_teams=claim_teams if open_and_future else [],
@@ -155,6 +206,14 @@ def detail(scrim_id):
     )
 
 
+def _credit_context() -> dict:
+    """Whether to offer the spend-a-credit option at all (FR-065), and the price to
+    show beside it. An action the balance cannot cover is not rendered."""
+    balance = credits.available_credits(_steam_id())
+    return {"balance": balance, "can_use_credits": balance >= 1,
+            "credit_minutes": current_app.config["CREDIT_MINUTES"]}
+
+
 def _propose_form_context():
     """Quick pick = on-platform teams only (research §9); the division browser is
     the path to the rest of the league."""
@@ -164,7 +223,8 @@ def _propose_form_context():
     opponents = [t for t in platform_teams()
                  if t["rgl_team_id"] not in my_ids and t["format"] in my_formats]
     return {"my_teams": my_teams, "opponents": opponents,
-            "format_labels": FORMAT_LABELS, "browse": None}
+            "format_labels": FORMAT_LABELS, "browse": None,
+            **_credit_context()}
 
 
 def _division_browser_context(my_teams):
@@ -223,7 +283,7 @@ def new():
 def propose():
     try:
         opponent_team_id = _int_field("opponent_team_id")
-        create_proposal(
+        scrim_id = create_proposal(
             _steam_id(),
             _int_field("proposer_team_id"),
             opponent_team_id,
@@ -240,7 +300,36 @@ def propose():
     else:
         flash("Scrim proposed — this team isn't on the platform yet, so they'll "
               "see it once a member joins and links their RGL account.", "success")
+    _attach_server(scrim_id)
     return redirect(url_for("scrims.index"))
+
+
+@bp.post("/scrims/<int:scrim_id>/server/attach")
+@login_required
+@rgl_link_required
+def attach_server(scrim_id):
+    """Attach a server to an already-scheduled scrim.
+
+    The second path to a server: the first is ticking the option while scheduling. Both
+    converge here so a team that scheduled before it had credits is not stuck.
+    """
+    steam_id = _steam_id()
+    row = get_scrim_for_viewer(scrim_id, steam_id)
+    if row is None:
+        abort(404)
+    scrim = dict(row)
+    if srv.server_for_scrim(scrim_id) is not None:
+        flash("That scrim already has a server.", "info")
+        return _back("scrims.detail", scrim_id=scrim_id)
+    if srv.owning_team_for(steam_id, scrim) is None:
+        abort(403)
+    try:
+        srv.attach_to_scrim(steam_id, scrim)
+    except InsufficientCredits as exc:
+        flash(str(exc), "error")
+        return redirect(url_for("credits.index"))
+    flash("A server will be ready when the scrim starts. 1 credit reserved.", "success")
+    return _back("scrims.detail", scrim_id=scrim_id)
 
 
 @bp.post("/scrims/<int:scrim_id>/accept")
@@ -291,6 +380,7 @@ def new_listing_form():
         "listing_new.html",
         my_teams=get_user_teams(_steam_id()),
         format_labels=FORMAT_LABELS,
+        **_credit_context(),
     )
 
 
@@ -299,7 +389,7 @@ def new_listing_form():
 @rgl_link_required
 def new_listing():
     try:
-        create_listing(
+        scrim_id = create_listing(
             _steam_id(),
             _int_field("team_id"),
             _form_datetime_utc(),
@@ -311,6 +401,7 @@ def new_listing():
         flash(str(err), "error")
         return redirect(url_for("scrims.new_listing_form"))
     flash("Open listing posted — any same-format team can claim it.", "success")
+    _attach_server(scrim_id)
     return redirect(url_for("scrims.index"))
 
 
@@ -326,6 +417,7 @@ def claim_listing(scrim_id):
         flash(str(err), "error")
         return _back()
     flash("Scrim confirmed!", "success")
+    _attach_server(scrim_id)
     return _back()
 
 

@@ -93,6 +93,54 @@
   {% endif %}
 </section>
 
+{# The scrim's server. A scrim has to be actionable from its own page, and buying more
+   time is the one action nobody wants to go hunting for mid-match. #}
+<section class="card">
+  <h2>Server</h2>
+  {% if server %}
+  <p>
+    <a href="{{ url_for('servers.server_detail', server_id=server.id) }}">{{ server.name }}</a>
+    <span class="badge {{ 'badge-on' if server.is_live else 'badge-off' }}">{{ server.state_label }}</span>
+  </p>
+  {% if server.explanation %}<p class="muted">{{ server.explanation }}</p>{% endif %}
+  {% if server.is_live and server.address %}
+  <p class="muted">Address: <code>{{ server.address }}</code>
+    {% if server.join_password %}· Join password: <code>{{ server.join_password }}</code>{% endif %}</p>
+  {% endif %}
+  {% if server.state == 'in_grace' %}
+  <div class="demo-banner"><strong>Overtime.</strong> Paid time has run out; this server
+    stops in {{ server.grace_remaining if server.grace_remaining is not none else 0 }}
+    minute(s) unless it's extended.</div>
+  {% elif server.is_live and server.minutes_remaining is not none %}
+  <p class="muted">{{ server.minutes_remaining }} minutes of paid time left.</p>
+  {% endif %}
+
+  {% if can_extend_server %}
+  <form method="post" action="{{ url_for('servers.extend', server_id=server.id) }}">
+    <input type="hidden" name="next" value="{{ request.full_path.rstrip('?') }}">
+    <button class="btn btn-primary" type="submit">
+      Extend {{ extension_minutes }} min — 1 credit</button>
+  </form>
+  {% elif server.is_live and balance < 1 %}
+  <p class="muted">No credits left to extend with.
+    <a href="{{ url_for('credits.index') }}">Buy credits</a></p>
+  {% endif %}
+
+  {% elif can_attach %}
+  <p class="muted">No server yet. Spend 1 credit to have one ready when this scrim
+    starts — you have {{ balance }}.</p>
+  <form method="post" action="{{ url_for('scrims.attach_server', scrim_id=scrim.id) }}">
+    <input type="hidden" name="next" value="{{ request.full_path.rstrip('?') }}">
+    <button class="btn btn-primary" type="submit">Start a server for this scrim</button>
+  </form>
+
+  {% else %}
+  {# FR-055: never imply a server is coming when none is. #}
+  <p class="muted">No server is attached to this scrim.
+    {% if balance < 1 %}<a href="{{ url_for('credits.index') }}">Buy credits</a> to add one.{% endif %}</p>
+  {% endif %}
+</section>
+
 {% if attendance is not none %}
 <section class="card">
   <h2>Attendance</h2>
