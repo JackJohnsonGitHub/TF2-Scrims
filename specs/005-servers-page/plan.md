@@ -122,7 +122,7 @@ app/
 ├── routes/
 │   ├── servers.py           # CHANGED: real inventory; extend; new_server REMOVED
 │   ├── credits.py           # NEW: /credits, /credits/trade/start
-│   ├── account.py           # CHANGED: trade-link capture beneath RGL linking
+│   ├── rgl.py               # CHANGED: owns GET /account; trade-link capture added here
 │   ├── scrims.py            # CHANGED: use_credits; server state + extend on detail
 │   └── console.py           # CHANGED: refuse when not running
 └── templates/
@@ -149,6 +149,12 @@ tests/
     ├── test_servers.py       # NEW: inventory, access, extend gating
     └── test_routes.py        # CHANGED: /servers/new gone
 ```
+
+**Where the trade link lives**: `GET /account` is owned by `app/routes/rgl.py` (endpoint `rgl.account`),
+not by an account blueprint — that endpoint is referenced from six places including the main nav. The
+trade-link route is therefore added to `rgl.py` beside the view that renders `account.html`, rather
+than renaming a well-referenced endpoint to purify a blueprint boundary. Config keys go in the
+existing `app/config.py`, and the load-bearing-key warning extends `Config.validate()`.
 
 **Structure Decision**: The existing flat `app/` layout with a thin service layer per domain
 (`scrims.py`, `rgl_store.py`, `accounts.py`) and blueprints under `app/routes/` is kept as-is. New
