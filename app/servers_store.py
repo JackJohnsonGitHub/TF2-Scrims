@@ -91,13 +91,34 @@ def get_server(server_id) -> dict | None:
     return dict(row) if row else None
 
 
+def scrim_sides(scrim_id) -> tuple:
+    """The two team ids a scrim is between."""
+    if not scrim_id:
+        return ()
+    row = get_db().execute(
+        "SELECT proposer_team_id, opponent_team_id FROM scrims WHERE id = ?",
+        (scrim_id,),
+    ).fetchone()
+    if row is None:
+        return ()
+    return tuple(t for t in (row["proposer_team_id"], row["opponent_team_id"]) if t)
+
+
 def can_access(server: dict, steam_id: str, team_ids) -> bool:
-    """Own it, or be on the team it is bound to. Nothing else — a server spun up for
-    another team's scrim is none of your business."""
+    """Who may **see and join** a server.
+
+    Both sides of a scrim, not just the side that paid. A match has two teams and they
+    both have to get onto the server — if the team that claimed a listing could not see
+    the address, the server would be useless to half the people playing on it.
+
+    Control is a separate and narrower question; see `can_manage`.
+    """
     if server.get("owner_steam_id") and server["owner_steam_id"] == steam_id:
         return True
-    team_id = server.get("team_id")
-    return team_id is not None and team_id in set(team_ids or ())
+    teams = set(team_ids or ())
+    if server.get("team_id") is not None and server["team_id"] in teams:
+        return True
+    return bool(teams & set(scrim_sides(server.get("scrim_id"))))
 
 
 def accessible_servers(steam_id: str, team_ids) -> list[dict]:
@@ -105,12 +126,65 @@ def accessible_servers(steam_id: str, team_ids) -> list[dict]:
     ids = list(team_ids or ())
     placeholders = ",".join("?" * len(ids)) if ids else "NULL"
     rows = get_db().execute(
-        f"""SELECT * FROM servers
-            WHERE owner_steam_id = ? OR team_id IN ({placeholders})
-            ORDER BY COALESCE(window_starts_at, created_at) ASC""",
-        (steam_id, *ids),
+        f"""SELECT DISTINCT v.* FROM servers v
+            LEFT JOIN scrims s ON s.id = v.scrim_id
+            WHERE v.owner_steam_id = ?
+               OR v.team_id IN ({placeholders})
+               OR s.proposer_team_id IN ({placeholders})
+               OR s.opponent_team_id IN ({placeholders})
+            ORDER BY COALESCE(v.window_starts_at, v.created_at) ASC""",
+        (steam_id, *ids, *ids, *ids),
     ).fetchall()
     return _rows_to_dicts(rows)
+
+
+def team_leaders(team_id) -> set:
+    """SteamIDs RGL marks as leaders of a team.
+
+    Authority comes from RGL's own roster data, not an in-app role hierarchy — which is
+    both what the constitution's non-goals require and the only source that stays true
+    as a team's leadership changes.
+    """
+    if not team_id:
+        return set()
+    rows = get_db().execute(
+        "SELECT steam_id FROM rgl_rosters WHERE rgl_team_id = ? AND is_leader = 1",
+        (team_id,),
+    ).fetchall()
+    return {r["steam_id"] for r in rows}
+
+
+def managing_team_for(server: dict) -> int | None:
+    """The team whose leaders control this server: the one that proposed the scrim or
+    posted the listing. For a season-term server there is no scrim, so it falls back to
+    the team the server is bound to."""
+    scrim_id = server.get("scrim_id")
+    if not scrim_id:
+        return server.get("team_id")
+    row = get_db().execute(
+        "SELECT proposer_team_id FROM scrims WHERE id = ?", (scrim_id,)).fetchone()
+    return row["proposer_team_id"] if row else server.get("team_id")
+
+
+def can_manage(server: dict, steam_id: str) -> bool:
+    """Who may **change settings, run commands, and buy more time**.
+
+    Only leaders of the team that proposed the scrim or posted the listing. Deliberately
+    narrower than `can_access`: everyone playing needs the address, but a server's
+    configuration is the organising team's to set.
+
+    Note this can differ from who paid. If the claiming team bought the server, control
+    still sits with the proposing team's leaders — that is the rule as specified.
+
+    **Fallback**: when the proposing team's roster has not been cached (RGL unreachable,
+    or a team we have never fetched), no leader is known. Rather than leave a server that
+    nobody can control, the owner keeps control until a roster arrives.
+    """
+    leaders = team_leaders(managing_team_for(server))
+    if not leaders:
+        return bool(server.get("owner_steam_id")
+                    and server["owner_steam_id"] == steam_id)
+    return steam_id in leaders
 
 
 def get_accessible_server(server_id, steam_id: str, team_ids) -> dict | None:
@@ -174,6 +248,22 @@ def slots_display(server: dict) -> str:
     players = server.get("players")
     shown = "?" if players is None else players
     return f"{shown}/{server.get('max_slots')}"
+
+
+def connect_command(server: dict) -> str | None:
+    """The line a player pastes into the TF2 console to join.
+
+    Both halves in one string on purpose: an address and a password shown separately is
+    two things to copy correctly with twelve people waiting. Returns None when there is
+    nothing to join, so no screen offers a command that cannot work.
+    """
+    if not is_live(server) or not server.get("address"):
+        return None
+    command = f"connect {server['address']}"
+    if server.get("join_password"):
+        # Quoted so a password containing a space or semicolon still parses.
+        command += f'; password "{server["join_password"]}"'
+    return command
 
 
 def minutes_remaining(server: dict) -> int | None:

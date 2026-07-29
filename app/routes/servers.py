@@ -51,6 +51,7 @@ def _view(server: dict) -> dict:
         "grace_remaining": store.grace_minutes_remaining(server),
         "explanation": store.stopped_explanation(server),
         "is_per_scrim": store.is_per_scrim(server),
+        "connect": store.connect_command(server),
     }
 
 
@@ -89,11 +90,14 @@ def detail_context(server: dict, steam_id: str, *, errors=None,
     `balance` and blowing up on `balance < 1` against an Undefined.
     """
     balance = credits.available_credits(steam_id)
+    can_manage = store.can_manage(server, steam_id)
     return {
         "server": _view(server),
-        "is_owner": store.is_owner(server, steam_id),
+        # Settings and console belong to the proposing team's leaders, not to whoever
+        # paid. Everyone with access still gets the connect command.
+        "can_manage": can_manage,
         "balance": balance,
-        "can_extend": balance >= 1,
+        "can_extend": can_manage and balance >= 1,
         "price": _price(),
         "errors": errors or {},
         "console_output": console_output or [],
@@ -119,7 +123,7 @@ def extend(server_id):
     """
     steam_id, _team_ids = _viewer()
     server = _server_or_404(server_id)
-    if not store.is_owner(server, steam_id):
+    if not store.can_manage(server, steam_id):
         abort(404)
     if server["state"] not in (store.RUNNING, store.IN_GRACE):
         flash("That server is not running, so there is no time to extend.", "info")
@@ -154,9 +158,9 @@ def _back(server_id):
 def update_settings(server_id):
     steam_id, _team_ids = _viewer()
     server = _server_or_404(server_id)
-    # Settings belong to the captain the server was granted to. A teammate can see and
-    # join it but not reconfigure it (Principle VIII: individual ownership).
-    if not store.is_owner(server, steam_id):
+    # Only leaders of the team that proposed the scrim or posted the listing. A player
+    # who can see and join the server still cannot reconfigure it.
+    if not store.can_manage(server, steam_id):
         abort(404)
 
     form = request.form

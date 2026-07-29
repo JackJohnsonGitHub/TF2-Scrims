@@ -60,6 +60,31 @@
   </footer>
 
   <script>
+    // Copy the connect command. Progressive enhancement only: without JS the command is
+    // still there as selectable text (`user-select: all`), so joining never depends on
+    // this working.
+    for (const btn of document.querySelectorAll("[data-copy]")) {
+      btn.addEventListener("click", async () => {
+        const source = btn.closest(".connect, td")?.querySelector(btn.dataset.copy);
+        if (!source) return;
+        try {
+          await navigator.clipboard.writeText(source.textContent.trim());
+          const was = btn.textContent;
+          btn.textContent = "Copied";
+          setTimeout(() => { btn.textContent = was; }, 1500);
+        } catch {
+          // Clipboard denied (no permission, or an insecure origin). Select the text
+          // instead so a manual copy is one keystroke away.
+          const range = document.createRange();
+          range.selectNodeContents(source);
+          getSelection().removeAllRanges();
+          getSelection().addRange(range);
+        }
+      });
+    }
+  </script>
+
+  <script>
     // Scrim times render as UTC server-side; rewrite each one into the viewer's
     // own timezone (FR-002). No JS => the UTC text stands, never a wrong time.
     for (const el of document.querySelectorAll("time.ts")) {

@@ -55,7 +55,7 @@
 <table class="table">
   <thead>
     <tr>
-      <th>Name</th><th>Map</th><th>State</th><th>Players</th><th>Address</th><th>Time left</th>
+      <th>Name</th><th>Map</th><th>State</th><th>Players</th><th>Join</th><th>Time left</th>
     </tr>
   </thead>
   <tbody>
@@ -70,8 +70,9 @@
       <td><span class="badge {{ 'badge-on' if s.is_live else 'badge-off' }}">{{ s.state_label }}</span></td>
       <td>{{ s.slots_display }}</td>
       {# Connect details only mean anything while it is actually up. #}
-      <td>{% if s.is_live and s.address %}<code>{{ s.address }}</code>
-          {% if s.join_password %}<br><span class="rail-meta">password: <code>{{ s.join_password }}</code></span>{% endif %}
+      <td>{% if s.connect %}
+            <code class="connect-cmd" data-connect>{{ s.connect }}</code>
+            <button class="btn btn-sm" type="button" data-copy="[data-connect]">Copy</button>
           {% else %}—{% endif %}</td>
       <td>
         {% if s.state == 'in_grace' %}

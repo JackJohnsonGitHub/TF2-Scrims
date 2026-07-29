@@ -103,9 +103,13 @@
     <span class="badge {{ 'badge-on' if server.is_live else 'badge-off' }}">{{ server.state_label }}</span>
   </p>
   {% if server.explanation %}<p class="muted">{{ server.explanation }}</p>{% endif %}
-  {% if server.is_live and server.address %}
-  <p class="muted">Address: <code>{{ server.address }}</code>
-    {% if server.join_password %}· Join password: <code>{{ server.join_password }}</code>{% endif %}</p>
+  {% if server.connect %}
+  <div class="connect">
+    <div class="connect-head">Join this server</div>
+    <code class="connect-cmd" data-connect>{{ server.connect }}</code>
+    <button class="btn btn-sm" type="button" data-copy="[data-connect]">Copy</button>
+    <p class="connect-hint">Paste into the TF2 console (<code>~</code> to open it).</p>
+  </div>
   {% endif %}
   {% if server.state == 'in_grace' %}
   <div class="demo-banner"><strong>Overtime.</strong> Paid time has run out; this server

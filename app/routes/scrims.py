@@ -184,7 +184,7 @@ def detail(scrim_id):
         balance=balance,
         can_attach=can_attach,
         can_extend_server=(server is not None
-                           and srv.is_owner(server, steam_id)
+                           and srv.can_manage(server, steam_id)
                            and srv.is_live(server) and balance >= 1),
         extension_minutes=current_app.config["EXTENSION_MINUTES"],
         roster=roster,

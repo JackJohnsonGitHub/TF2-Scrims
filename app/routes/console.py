@@ -1,8 +1,8 @@
 """Admin console command handler.
 
-RCON is the most privileged surface there is, so only the captain the server was
-granted to may reach it (constitution IV/VIII) — a teammate can see and join a server
-without being able to run commands against it.
+RCON is the most privileged surface there is, so only leaders of the team that proposed
+the scrim or posted the listing may reach it (constitution IV/VIII). Everyone playing the
+match can see and join the server; nobody else can run commands against it.
 
 `[sim]`: no real RCON traffic occurs this increment. What is real is the refusal: a
 server that is not running says so with a reason, rather than answering as though the
@@ -23,7 +23,7 @@ def run_command(server_id):
     steam_id = current_user()["steam_id"]
     team_ids = [t["rgl_team_id"] for t in get_user_teams(steam_id)]
     server = store.get_accessible_server(server_id, steam_id, team_ids)
-    if server is None or not store.is_owner(server, steam_id):
+    if server is None or not store.can_manage(server, steam_id):
         abort(404)
 
     command = (request.form.get("command") or "").strip()

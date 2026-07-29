@@ -170,6 +170,24 @@ h2 { font-size: 19px; }
 .field-check .check-text { display: block; margin: 0; font-size: 14px; color: var(--ink); }
 .field-check .check-hint { display: block; margin-top: 3px; font-size: 12px; color: var(--muted); }
 
+/* Connect command. Given prominence because it is the single thing every player on both
+   teams actually needs from this app once a match starts. */
+.connect {
+  margin: 14px 0; padding: 12px 14px; border-radius: 6px;
+  background: var(--panel-2); border: 1px solid var(--on);
+}
+.connect-head { font-size: 12px; font-weight: 700; color: var(--on);
+                text-transform: uppercase; letter-spacing: .05em; margin-bottom: 8px; }
+.connect-cmd {
+  display: inline-block; padding: 6px 10px; border-radius: 4px;
+  background: var(--bg); border: 1px solid var(--line);
+  color: var(--ink); font-size: 13px; user-select: all;
+  max-width: 100%; overflow-x: auto; white-space: nowrap; vertical-align: middle;
+}
+.connect-hint { margin: 8px 0 0; font-size: 12px; color: var(--muted); }
+/* In a table cell the command has to stay compact. */
+.table .connect-cmd { font-size: 12px; max-width: 320px; }
+
 .form-actions { display: flex; align-items: center; gap: 12px; margin-top: 4px; }
 
 /* flashes */

@@ -17,13 +17,19 @@
 <p class="muted">{{ server.explanation }}</p>
 {% endif %}
 
-<p class="muted">
-  Map: {{ server.map }} · Players: {{ server.slots_display }}
-  {% if server.is_live and server.address %}
-  · Address: <code>{{ server.address }}</code>
-  {% if server.join_password %}· Join password: <code>{{ server.join_password }}</code>{% endif %}
-  {% endif %}
-</p>
+<p class="muted">Map: {{ server.map }} · Players: {{ server.slots_display }}</p>
+
+{% if server.connect %}
+{# Everyone playing the match needs this, both teams — not just whoever paid. One
+   pasteable line rather than an address and a password to copy separately, because
+   getting two things right with twelve people waiting is two chances to fumble. #}
+<div class="connect">
+  <div class="connect-head">Join this server</div>
+  <code class="connect-cmd" data-connect>{{ server.connect }}</code>
+  <button class="btn btn-sm" type="button" data-copy="[data-connect]">Copy</button>
+  <p class="connect-hint">Paste into the TF2 console (<code>~</code> to open it).</p>
+</div>
+{% endif %}
 
 {% if server.window_starts_at %}
 <p class="muted">
@@ -56,7 +62,7 @@
 <p class="muted">{{ server.minutes_remaining }} minutes of paid time left.</p>
 {% endif %}
 
-{% if is_owner and server.is_live %}
+{% if can_manage and server.is_live %}
 <div class="form-actions">
   {% if can_extend %}
   {# Cost and duration stated before committing (FR-081). No Steam call in this path,
@@ -76,7 +82,7 @@
 {% endif %}
 
 <div class="two-col">
-  {% if is_owner %}
+  {% if can_manage %}
   <section class="panel">
     <h2>Settings</h2>
     <form class="form" method="post" action="{{ url_for('servers.update_settings', server_id=server.id) }}">
@@ -140,8 +146,9 @@
   {% else %}
   <section class="panel">
     <h2>Joining</h2>
-    <p class="muted">This server belongs to your team, so you can see and join it. Its
-      settings and console are the owner's.</p>
+    <p class="muted">You're playing this match, so you can see and join this server.
+      Its settings and console belong to the leaders of the team that organised the
+      scrim.</p>
   </section>
   {% endif %}
 </div>

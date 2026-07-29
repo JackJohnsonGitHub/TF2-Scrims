@@ -172,15 +172,17 @@ def test_console_refuses_when_the_server_is_not_running(client, login, link_team
     assert b"Placeholder response" not in resp.data
 
 
-def test_a_teammate_who_is_not_the_owner_gets_no_controls(client, login, link_team,
-                                                          demo_servers):
-    """Visible and joinable, but settings and console belong to the captain the
-    server was granted to (Principle VIII)."""
-    _steam_id, ids = on_server_team(login, link_team, demo_servers)  # not the owner
+def test_a_player_who_is_not_a_managing_leader_gets_no_controls(client, login,
+                                                               link_team,
+                                                               demo_servers):
+    """Visible and joinable, but settings and console belong to the leaders of the team
+    that organised the scrim. This viewer is on the server's team and still gets no
+    controls, which is the point of separating access from control."""
+    _steam_id, ids = on_server_team(login, link_team, demo_servers)
     body = client.get(f"/servers/{ids[0]}").get_data(as_text=True)
     assert "Admin console" not in body
     assert "Save settings" not in body
-    assert "can see and join it" in body
+    assert "can see and join this server" in body
     assert client.post(f"/servers/{ids[0]}/settings", data={
         "name": "X", "map": "cp_x", "max_slots": "24"}).status_code == 404
     assert client.post(f"/servers/{ids[0]}/console",
