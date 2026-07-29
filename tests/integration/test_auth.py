@@ -7,7 +7,8 @@ STEAM_ID = "76561198000000123"
 
 
 def _mock_verify(monkeypatch, result):
-    monkeypatch.setattr(auth_routes, "verify_return", lambda params: result)
+    monkeypatch.setattr(auth_routes, "verify_return",
+                        lambda params, expected_return_to: result)
 
 
 def _mock_summary(monkeypatch, persona="Tester", avatar="http://avatar/x.jpg"):
@@ -78,6 +79,52 @@ def test_next_rejects_external_redirect(client, monkeypatch):
     ret = client.get("/login/return?openid.claimed_id=x")
     # External target ignored → falls back to the dashboard.
     assert ret.headers["Location"].endswith("/")
+
+
+def _openid_query(return_to, steam_id=STEAM_ID):
+    return {
+        "openid.mode": "id_res",
+        "openid.claimed_id": f"https://steamcommunity.com/openid/id/{steam_id}",
+        "openid.identity": f"https://steamcommunity.com/openid/id/{steam_id}",
+        "openid.return_to": return_to,
+        "openid.signed": "claimed_id,identity,return_to",
+        "openid.sig": "c2lnbmF0dXJl",
+    }
+
+
+def test_foreign_assertion_does_not_sign_anyone_in(client, monkeypatch):
+    """An assertion Steam minted for a different site must not work here, even
+    though Steam would confirm its signature. Exercises the real verify_return
+    through the route — only the Steam round-trip is stubbed, and reaching it at
+    all is the failure."""
+    import app.steam as steam
+
+    def _unreachable(*a, **k):
+        raise AssertionError("foreign assertion must be rejected before Steam")
+
+    monkeypatch.setattr(steam.requests, "post", _unreachable)
+
+    resp = client.get("/login/return",
+                      query_string=_openid_query("https://evil.example.com/login/return"))
+    assert resp.status_code == 400
+    assert b"Sign-in didn't complete" in resp.data
+    assert client.get("/servers").status_code == 302  # still anonymous
+
+
+def test_assertion_addressed_to_this_site_signs_in(client, app, monkeypatch):
+    """The other half: the route must pass its own return_to, or nobody can log in."""
+    import app.steam as steam
+
+    class _Valid:
+        text = "ns:http://specs.openid.net/auth/2.0\nis_valid:true\n"
+
+    monkeypatch.setattr(steam.requests, "post", lambda *a, **k: _Valid())
+    _mock_summary(monkeypatch, persona="Rocket Jumper")
+
+    resp = client.get("/login/return",
+                      query_string=_openid_query(f"{app.config['BASE_URL']}/login/return"))
+    assert resp.status_code == 302
+    assert client.get("/servers").status_code == 200
 
 
 def test_logout_clears_session(client, login):

@@ -4,7 +4,8 @@ from flask import (Blueprint, current_app, redirect, render_template, request,
 
 from ..accounts import upsert_on_login
 from ..security import safe_next
-from ..steam import build_login_url, fetch_summary, verify_return
+from ..steam import (build_login_url, fetch_summary, return_to_url,
+                     verify_return)
 
 bp = Blueprint("auth", __name__)
 
@@ -20,8 +21,11 @@ def login():
 
 @bp.get("/login/return")
 def login_return():
-    # Server-side verification is mandatory before any session is established.
-    steam_id = verify_return(request.args.to_dict(flat=True))
+    # Server-side verification is mandatory before any session is established, and
+    # the assertion must be one Steam minted for *this* site — passing our own
+    # return_to is what makes it unusable elsewhere (see steam.verify_return).
+    steam_id = verify_return(request.args.to_dict(flat=True),
+                             return_to_url(current_app.config["BASE_URL"]))
     if steam_id is None:
         return render_template("login_error.html"), 400
 
