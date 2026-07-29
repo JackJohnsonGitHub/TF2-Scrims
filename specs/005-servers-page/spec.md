@@ -386,6 +386,13 @@ grows and the balance falls by one.
 - **FR-028**: A per-scrim server MUST offer only the settings meaningful for a short-lived match
   server.
 
+**Failure**
+
+- **FR-029** *[sim]*: A server that could not be placed MUST be reported as failed to its team,
+  against the scrim it was for.
+- **FR-030** *[sim]*: Reaching the platform's concurrency cap MUST surface as a visible failure to
+  the affected team, never as a silently missing server.
+
 **Accounts and payment** *(first method: Steam trade offer; more methods are planned — see
 Assumptions)*
 
@@ -506,13 +513,6 @@ Assumptions)*
   rescheduling must decide whether a moved scrim re-reserves its credit, and what happens when its
   server has already run. This requirement is a placeholder for that design, not a description of it,
   and MUST be re-specified alongside rescheduling itself.
-
-**Failure**
-
-- **FR-029** *[sim]*: A server that could not be placed MUST be reported as failed to its team,
-  against the scrim it was for.
-- **FR-030** *[sim]*: Reaching the platform's concurrency cap MUST surface as a visible failure to
-  the affected team, never as a silently missing server.
 
 ### Key Entities
 

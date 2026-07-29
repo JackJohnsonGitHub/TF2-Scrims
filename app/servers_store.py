@@ -122,6 +122,32 @@ def get_accessible_server(server_id, steam_id: str, team_ids) -> dict | None:
     return server
 
 
+def scrims_without_servers(steam_id: str) -> list[dict]:
+    """The viewer's upcoming scrims that have no server attached (FR-016).
+
+    This is what lets the Servers page answer "which of my matches still need somewhere
+    to play" without navigating anywhere else (SC-001). Covers every side of a scrim the
+    viewer is on, and every status that can still be played.
+    """
+    rows = get_db().execute(
+        """SELECT s.id, s.format, s.scheduled_at, s.status,
+                  pt.name AS proposer_name, ot.name AS opponent_name
+           FROM scrims s
+           JOIN rgl_memberships m
+                ON m.steam_id = ?
+                AND m.rgl_team_id IN (s.proposer_team_id, s.opponent_team_id)
+           LEFT JOIN rgl_teams pt ON pt.rgl_team_id = s.proposer_team_id
+           LEFT JOIN rgl_teams ot ON ot.rgl_team_id = s.opponent_team_id
+           LEFT JOIN servers v ON v.scrim_id = s.id
+           WHERE v.id IS NULL
+             AND s.status IN ('confirmed', 'open', 'pending')
+             AND s.scheduled_at > ?
+           ORDER BY s.scheduled_at ASC""",
+        (steam_id, utc_now()),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
 def server_for_scrim(scrim_id) -> dict | None:
     row = get_db().execute(
         "SELECT * FROM servers WHERE scrim_id = ?", (scrim_id,)).fetchone()

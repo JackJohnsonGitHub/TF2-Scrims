@@ -165,6 +165,7 @@ the compute behind it is simulated this increment.
 | `players` | INTEGER | Simulated; NULL means unknown (FR-007). |
 | `window_starts_at` | TEXT | The scrim's scheduled time (FR-078). |
 | `window_ends_at` | TEXT | Absolute boundary; extensions push it out (research R9). |
+| `term_ends_at` | TEXT | Season-term servers only (`scrim_id IS NULL`). **Display only**: constitution v3.1.0 settles the per-scrim credit but leaves the season-term purchase unit undefined, so nothing can create one of these yet (FR-011). |
 | `grace_used` | INTEGER NOT NULL DEFAULT 0 | Once per server (FR-074). |
 | `demo` | INTEGER NOT NULL DEFAULT 0 | Keeps the sample-data label (FR-013). |
 | `stopped_reason` | TEXT | `time_expired`, `cancelled`, `failed_to_place` — so FR-076 can say *why*. |

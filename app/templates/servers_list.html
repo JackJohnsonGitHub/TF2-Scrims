@@ -21,6 +21,33 @@
 
 {% else %}
 
+{% if needing_servers %}
+{# FR-016 / SC-001: the question this page has to answer at a glance is "which of my
+   matches still need somewhere to play". Answer it before the inventory, since a team
+   with servers already knows about those. #}
+<section class="card">
+  <h2>Scrims with no server</h2>
+  {% for s in needing_servers %}
+  <div class="rail-item">
+    <a href="{{ url_for('scrims.detail', scrim_id=s.id) }}">
+      <strong>{{ s.proposer_name }}{% if s.opponent_name %} vs {{ s.opponent_name }}{% endif %}</strong></a>
+    <span class="rail-meta">{{ s.scheduled_at | local_dt }}</span>
+    {% if balance >= 1 %}
+    <form method="post" action="{{ url_for('scrims.attach_server', scrim_id=s.id) }}" style="display:inline">
+      <input type="hidden" name="next" value="{{ request.full_path.rstrip('?') }}">
+      <button class="btn btn-sm" type="submit">Start a server — 1 credit</button>
+    </form>
+    {% endif %}
+  </div>
+  {% endfor %}
+  {% if balance < 1 %}
+  {# FR-065: no action that would fail; the route to fixing it instead. #}
+  <p class="muted">You have no credits, so there's nothing to spend on these.
+    <a href="{{ url_for('credits.index') }}">Buy credits</a></p>
+  {% endif %}
+</section>
+{% endif %}
+
 {% if servers %}
 {% if servers | selectattr('demo') | list %}
 <div class="demo-banner">Servers tagged <span class="badge badge-demo">DEMO</span> are sample data — not real running servers.</div>

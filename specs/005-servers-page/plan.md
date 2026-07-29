@@ -35,7 +35,7 @@ dependencies** — notably no scheduler library (research R5) and no Steam SDK; 
 documented HTTP endpoints is sufficient.
 
 **Storage**: SQLite via stdlib `sqlite3` (`app/db.py`), file at `DB_PATH`, PVC-mounted in cluster.
-Five new tables, all additive `CREATE TABLE IF NOT EXISTS` — no `ALTER TABLE` migration path needed.
+Four new tables, all additive `CREATE TABLE IF NOT EXISTS` — no `ALTER TABLE` migration path needed.
 
 **Testing**: pytest 8.2.2. Steam is mocked at the `app/steam_trade.py` seam; no network in tests, no
 API key needed — matching how RGL and Steam OpenID are already handled.
@@ -57,7 +57,7 @@ with **no Steam call in its path**.
 - SQLite single-writer: WAL + busy timeout required before the poller exists (research R6).
 - `STEAM_API_KEY` becomes load-bearing where it was previously optional.
 
-**Scale/Scope**: ~5 new templates/partials, ~6 new routes, 2 removed, 3 changed scrim routes, 5 new
+**Scale/Scope**: ~5 new templates/partials, ~6 new routes, 2 removed, 3 changed scrim routes, 4 new
 tables, 2 CLI commands. 226 existing tests must stay green except the one deliberate break below.
 
 ## Constitution Check
@@ -97,7 +97,7 @@ specs/005-servers-page/
 ├── plan.md                       # This file
 ├── spec.md                       # 82 FRs, 14 SCs, 5 user stories
 ├── research.md                   # Phase 0 — Steam API verification, architecture decisions
-├── data-model.md                 # Phase 1 — 5 new tables, 2 state machines
+├── data-model.md                 # Phase 1 — 4 new tables, 2 state machines
 ├── contracts/
 │   ├── servers-routes.md         # HTTP + CLI contracts
 │   └── steam-trade-client.md     # The Steam economy API seam
@@ -110,7 +110,7 @@ specs/005-servers-page/
 
 ```text
 app/
-├── db.py                    # CHANGED: WAL + busy_timeout + foreign_keys; 5 new tables
+├── db.py                    # CHANGED: WAL + busy_timeout + foreign_keys; 4 new tables
 ├── models.py                # CHANGED: SAMPLE_SERVERS list → persisted servers; keep can_access
 ├── steam.py                 # unchanged (OpenID + persona)
 ├── steam_trade.py           # NEW: IEconService seam — hold durations, received offers

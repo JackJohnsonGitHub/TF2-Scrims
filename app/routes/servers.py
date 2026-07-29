@@ -69,6 +69,9 @@ def list_servers():
         # route to buying credits appears in its place.
         can_extend=balance >= 1,
         price=_price(),
+        # FR-016 / SC-001: which of my upcoming matches still have nowhere to play,
+        # answerable from this page without navigating anywhere else.
+        needing_servers=store.scrims_without_servers(steam_id) if team_ids else [],
     )
 
 

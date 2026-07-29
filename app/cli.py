@@ -13,7 +13,7 @@ import click
 from flask import current_app
 from flask.cli import with_appcontext
 
-from . import credits, payments
+from . import payments
 from . import servers_store as store
 from .steam_trade import SteamUnavailable
 
@@ -96,11 +96,3 @@ def reconcile_servers():
     click.echo(f"Reconciled {len(moved)} server(s).")
     for line in moved:
         click.echo(f"  {line}")
-
-
-def release_for_server(server: dict, cause: str) -> None:
-    """Return a server's reserved credit. Used when a scrim is cancelled before start
-    or a server could not be placed — a team is never charged for a server it did not
-    get (FR-067, Principle VII)."""
-    credits.release(server["owner_steam_id"], cause,
-                    scrim_id=server.get("scrim_id"), server_id=server["id"])
