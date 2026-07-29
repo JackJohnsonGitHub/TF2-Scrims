@@ -156,7 +156,7 @@ not an artefact of ordering.
 - [X] T046 [P] [US2] Add the server option to `app/templates/scrim_new.html` and `app/templates/listing_new.html`, rendered only when the balance can cover it, with the cost stated
 - [X] T047 [US2] Add the same option to the claim action wherever it is rendered (`app/templates/scrim_detail.html` and the listings view)
 - [X] T048 [US2] Update `app/templates/scrim_detail.html` to show the attached server's state, offer the extend action there (FR-080), and — where the option was chosen but never paid for — state plainly that **no server is attached** rather than implying one is coming
-- [X] T049 [US2] Handle rescheduling in `app/scrims.py`: a scrim whose time changes moves its server's window with it, consuming and returning nothing
+- [ ] T049 [US2] **DEFERRED — not done.** Handle rescheduling in `app/scrims.py`: a scrim whose time changes moves its server's window with it, consuming and returning nothing. **The app has no reschedule flow** — a scrim's time cannot be changed, only cancelled and re-created — so there is nothing for this to hook into. An earlier pass implemented `servers_store.move_window` and marked this complete; the helper was unreachable and unverified, so it has been removed and this task un-checked. Re-scope alongside FR-082 when rescheduling is specified
 
 **Checkpoint**: Scheduling and paying are one flow, and scheduling is still free and unbreakable.
 

@@ -265,8 +265,9 @@ grows and the balance falls by one.
     spend credits on a server for that scrim as part of claiming it.
 15. **Given** a scrim of mine is under way, **When** I open the scrim's own page, **Then** I can extend
     its server from there, and I am told the cost and the time it adds before I commit.
-16. **Given** a scrim is rescheduled after I reserved credits for it, **When** the new time arrives,
-    **Then** the server is ready then instead, and no credits were lost or double-spent.
+16. *(Deferred with FR-082 — there is no reschedule flow to exercise.)* **Given** a scrim is
+    rescheduled after I reserved credits for it, **When** the new time arrives, **Then** the server is
+    ready then instead, and no credits were lost or double-spent.
 
 ---
 
@@ -497,8 +498,14 @@ Assumptions)*
   can buy more time from the page they are already watching during a match.
 - **FR-081**: The extend action MUST show what it will cost and how much time it will add before it is
   taken.
-- **FR-082**: A scrim whose scheduled time is changed after credits were reserved MUST move its runtime
-  window with it, without consuming or returning credits.
+- **FR-082** *[deferred]*: A scrim whose scheduled time is changed after credits were reserved MUST
+  move its runtime window with it, without consuming or returning credits.
+  *Deferred after implementation:* **the platform has no reschedule flow** — a scrim's time cannot be
+  changed once set, only cancelled and re-created — so this requirement describes behaviour for a
+  capability that does not exist and cannot be tested. It also understates the problem: whoever adds
+  rescheduling must decide whether a moved scrim re-reserves its credit, and what happens when its
+  server has already run. This requirement is a placeholder for that design, not a description of it,
+  and MUST be re-specified alongside rescheduling itself.
 
 **Failure**
 

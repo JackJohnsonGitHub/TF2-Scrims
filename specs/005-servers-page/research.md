@@ -214,9 +214,13 @@ present benefit. Revisit only if a ledger scan ever shows up in a profile.
 extension events. A reconcile command advances state past those timestamps.
 
 **Rationale**: Storing absolute boundaries rather than a running clock means the window is correct
-without anything having to tick, which matters because the reconciler runs intermittently. A window
-that a rescheduled scrim must follow (FR-082) is then a recomputation of `starts_at`, not a
-migration of accumulated time.
+without anything having to tick, which matters because the reconciler runs intermittently.
+
+*Corrected after implementation:* this section originally added that a rescheduled scrim's window
+(FR-082) "is then a recomputation of `starts_at`, not a migration of accumulated time". That was
+premature on two counts — the platform has no reschedule flow to trigger it, and moving the
+boundaries is only the easy half (whether a moved scrim re-reserves, and what happens when its server
+has already run, are the real questions). FR-082 is deferred and no implementation is carried.
 
 **Grace is once per server** (FR-074): a single boolean, not a counter, so no accounting is needed.
 

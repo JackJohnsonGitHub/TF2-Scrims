@@ -272,24 +272,12 @@ def mark_grace_used(server_id) -> None:
     get_db().commit()
 
 
-def move_window(scrim_id, scheduled_at: str) -> None:
-    """Follow a rescheduled scrim. The window length is preserved, so nothing is
-    consumed or returned — only the boundaries move."""
-    server = server_for_scrim(scrim_id)
-    if server is None or server["state"] in TERMINAL_STATES:
-        return
-    start, _unused = window_for(scheduled_at)
-    old_start = _parse(server.get("window_starts_at"))
-    old_end = _parse(server.get("window_ends_at"))
-    length = (old_end - old_start) if (old_start and old_end) else timedelta(
-        minutes=current_app.config["CREDIT_MINUTES"])
-    new_end = (_parse(start) + length).isoformat(timespec="seconds")
-    get_db().execute(
-        """UPDATE servers SET window_starts_at = ?, window_ends_at = ?, updated_at = ?
-           WHERE id = ?""",
-        (start, new_end, utc_now(), server["id"]),
-    )
-    get_db().commit()
+# NOTE: there is deliberately no `move_window` here. FR-082 (a rescheduled scrim's server
+# follows it) is deferred: the app has no reschedule flow, so any implementation would be
+# unreachable and unverified. It is also only the easy half of the problem — whoever builds
+# rescheduling has to decide whether a moved scrim re-reserves, and what happens when its
+# server has already run — and a guess at that, sitting here untested, would mislead rather
+# than help. See specs/005-servers-page/spec.md FR-082.
 
 
 def owning_team_for(actor_steam_id: str, scrim: dict) -> int | None:
