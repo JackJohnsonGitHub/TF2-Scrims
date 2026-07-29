@@ -1,49 +1,71 @@
 <!--
 Sync Impact Report
 ==================
-Version change: 2.1.0 → 3.0.0
-Rationale: MAJOR. The product is redefined. Scrim scheduling — not server rental — is the core
-           loop, and it is **free** for any Steam-authenticated, RGL-linked user. Paid servers
-           become an upsell that attaches to a scrim a team already scheduled: a per-scrim server
-           auto-started for that match (the entry point), or a season-long rented server (a
-           permanent home). Two principles are redefined and the Scope & Non-Goals section is
-           rewritten, including the removal of "a free tier" from the non-goals.
+Version change: 3.0.0 → 3.1.0
+Rationale: MINOR. No principle is added or removed and no core rule is reversed; this amendment
+           *completes* a decision v3.0.0 explicitly deferred to a follow-up TODO — the concrete
+           entitlement unit — and names the first payment method. Principle VIII's non-negotiable
+           rule is unchanged (a server-side-enforced, operator-granted entitlement gates compute);
+           what changes is that the entitlement now has a defined unit (a credit worth one hour of
+           runtime) and the granting act has a defined mechanism (the operator accepting payment).
+           Principles II and IV gain materially expanded guidance rather than new obligations.
+
+           Judgement call worth recording: an argument exists for MAJOR, on the grounds that
+           "operator approves an entitlement" previously implied a deliberate in-app approval step
+           and now resolves to "the operator accepted the payment". That is a mechanism change, not
+           a governance reversal — the operator's deliberate, recorded act still gates compute and
+           is still never inferred from client input — so MINOR is the honest reading. Revisit as
+           4.0.0 if the project decides the approval *surface* was itself constitutional.
 
 Changes in this amendment:
-  - I.    "Ship the Smallest Paid Loop First" → "Scrims First, Servers as the Upsell". The loop to
-          prove is sign in → link RGL → schedule a scrim → optionally pay for a server. Scrim
-          scheduling MUST remain free and complete on its own.
-  - II.   Servers Are Cattle → now governs TWO lifecycles: per-scrim (create before, destroy after)
-          and season-term (suspend → grace → delete). Churn is higher, so reclamation is stricter.
-  - VII.  Right-Size the Blast Radius → adds a cap on concurrently auto-started servers; a rush of
-          scheduled scrims MUST NOT be able to exhaust node capacity or the MetalLB IP pool.
-  - VIII. "Steam-Authenticated, Approved Access" → "Free to Schedule, Approved to Provision".
-          Identity gates the scrim surface (free); recorded operator approval gates compute; an
-          auto-started server MUST be bound to a specific scheduled scrim.
-  - Scope & Non-Goals → rewritten around the free scrim platform + paid server attach; "a free
-          tier" REMOVED from non-goals (the scrim surface is the free tier); in-app role
-          hierarchies beyond RGL membership added to non-goals.
-  - Development Workflow → build order updated: the scrim loop is proven (003/004 shipped); the
-          unproven risk is now provisioning bound to a scrim (MetalLB UDP, RCON, auto-start).
+  - II.   Servers Are Cattle → the per-scrim lifecycle is now defined by a **runtime window**: created
+          early enough to be joinable at the scrim's scheduled start, destroyed once the window,
+          any extensions, and a single bounded unpaid grace period have elapsed.
+  - IV.   Secure by Default → the payments bullet names **Steam trade offers as the first supported
+          method**, requires the model stay method-agnostic as more are added, classes any
+          payment-observing credential as an OpenBao secret, and forbids accepting a payment the
+          provider would not complete in time to be useful.
+  - VIII. Free to Schedule, Approved to Provision → the entitlement unit is settled: **a credit is
+          one hour of server runtime**. Credits are reserved against a scheduled scrim, consumed as
+          the server runs, cost one credit per 30 minutes to extend, never expire, and belong to the
+          paying account. The granting act is the operator's acceptance of payment, observed by the
+          platform rather than asserted by a client. A runtime window begins at the scrim's scheduled
+          start; provisioning time is not charged.
+  - Scope & Non-Goals → credits and trade-based payment added to the in-scope list; the
+          payment-processing non-goal clarified (the app observes a completed payment, it never
+          moves money).
+  - Development Workflow → records that feature 005 is specified against these terms.
+
+Resolved from v3.0.0:
+  - ✅ "Define the concrete entitlement unit for a per-scrim server (single credit vs. bundle) before
+        the first provisioning feature is specified." — **DONE**: one credit = one hour of runtime;
+        2 Mann Co. Supply Crate Keys grant 5 credits; extension costs 1 credit per 30 minutes. The
+        rate itself is configuration, not constitutional, so it may move with the market without an
+        amendment.
 
 Prior amendments (retained for history): 1.1.0 → 2.0.0 redefined a free hobby PoC as a paid
-service; 2.0.0 → 2.1.0 moved payment out-of-band (request → operator approval, no PCI scope).
+service; 2.0.0 → 2.1.0 moved payment out-of-band (request → operator approval, no PCI scope);
+3.0.0 redefined the product as scrims-first with servers as a paid attach.
 
-Templates requiring updates:
-  - ✅ .specify/templates/plan-template.md / spec-template.md / tasks-template.md — constitution
-        references are generic ("[Gates determined based on constitution file]"); no edits needed.
-  - ✅ README.md — product framing, status, and scope rewritten to the scrims-first model.
-  - ⚠ docs/product-brief.md — still describes the core paid loop as renting a season server (§P1).
-  - ⚠ docs/tech-context.md — still frames the buyer as purchasing a server ("purchase → joinable").
-  - ⚠ docs/constitution-seed.md — seed principle 1 and its non-goals predate this amendment.
-  - ⚠ specs/004-scrims-dashboard/plan.md — its Constitution Check records a *justified deviation*
-        from the old Principle I for building scrim UX ahead of the paid loop. That deviation is
-        DISSOLVED by this amendment: 004 is now core-loop work, not a deviation. The historical
-        note may stay, but future analyze/converge runs should stop treating it as an open item.
+Templates and docs requiring updates:
+  - ✅ .specify/templates/plan-template.md — Constitution Check is generic ("[Gates determined based
+        on constitution file]"); no edit needed.
+  - ✅ .specify/templates/spec-template.md / tasks-template.md — no constitution references.
+  - ✅ specs/005-servers-page/spec.md — already written against these terms; it is the source of
+        this amendment.
+  - ⚠ README.md — §"Scope of the first version" and the Monetization row still describe an
+        entitlement as "a per-scrim server" granted by operator approval, with no mention of credits
+        or trade payment.
+  - ⚠ docs/product-brief.md — §P1 and the user stories still frame the entitlement as per-scrim vs
+        season-term; its open-questions list (line ~138) still asks for the entitlement unit that
+        this amendment settles, and should be struck.
+  - ⚠ docs/constitution-seed.md — predates v3.0.0 as well as this amendment.
+  - ⚠ specs/004-scrims-dashboard/plan.md — its recorded deviation from the old Principle I remains
+        dissolved (see v3.0.0); no new action.
 
 Follow-up TODOs:
-  - Define the concrete entitlement unit for a per-scrim server (single credit vs. bundle) before
-    the first provisioning feature is specified.
+  - Season-long rented servers remain in scope but have no defined unit of purchase. Credits cover
+    per-scrim runtime only. Define the season-term unit before specifying that product.
   - RATIFICATION_DATE unchanged (2026-07-09, original adoption).
 -->
 
@@ -56,21 +78,30 @@ The loop that defines this product is: **sign in with Steam → link an RGL iden
 arrange a scrim → optionally pay to have a server ready when it starts.** Scheduling MUST be
 **free and complete on its own** — a team that never pays a cent MUST still be able to post
 listings, claim them, propose matches, see rosters, and track attendance. Paid work MUST attach to
-a scrim that already exists rather than standing in front of it. Every increment MUST advance or
-harden this loop, and when two designs both work, the smallest one that works wins.
+a scrim that already exists rather than standing in front of it. Scheduling MUST NEVER be blocked,
+delayed, or made to fail by anything to do with payment, credit balance, or the availability of a
+payment provider. Every increment MUST advance or harden this loop, and when two designs both work,
+the smallest one that works wins.
 **Rationale:** Scheduling is the habit teams come back to every week; servers are what that habit
 can be sold. Gating the scheduling surface behind payment would leave nobody to sell to, and a
 half-built scheduling tool makes the paid attach worthless.
 
 ### II. Servers Are Cattle, Not Pets
 Every server MUST be fully described by code and config and MUST be disposable. Two lifecycles are
-now in scope and both MUST reclaim **workload, Service, PVC, and MetalLB IP** without manual help:
-- **Per-scrim**: created shortly before its scrim's scheduled start, destroyed once the match ends.
+in scope and both MUST reclaim **workload, Service, PVC, and MetalLB IP** without manual help:
+- **Per-scrim**: created early enough to be joinable at its scrim's **scheduled start time**, and
+  destroyed once its **runtime window** has elapsed — that window being the time its credits entitle
+  it to, plus any extensions, plus a single bounded unpaid grace period. Matches commonly overrun,
+  so that grace MUST exist; it MUST be granted once per server rather than once per window, or
+  repeated extension becomes a way to accumulate free time. At the end of the grace an un-extended
+  server MUST stop, and its team MUST be able to see that it stopped because time ran out rather
+  than because something broke.
 - **Season-term**: suspend → grace period (config and maps retained so the owner can renew) →
   delete and reclaim.
 No server may depend on manual, one-off, in-place mutation to reach or stay in its desired state.
 **Rationale:** Per-scrim servers turn creation and destruction into a daily, high-volume event. A
-resource leak that was survivable once a season becomes a continuous drain on shared capacity.
+resource leak that was survivable once a season becomes a continuous drain on shared capacity. And
+a server that outlives what was paid for it is a leak of a different kind.
 
 ### III. Kubernetes-Native Control
 The control plane MUST manipulate the cluster through the Kubernetes API, using the official
@@ -85,16 +116,23 @@ Identity, secrets, and payments are guarded by default:
 - **Auth:** every account is a Steam-verified identity (Principle VIII). Free scrim features still
   require that identity; privileged actions require an authenticated session bound to it, and
   authority is always re-checked server-side against stored memberships — never inferred from
-  submitted ids.
+  submitted ids. A Steam sign-in assertion MUST be verified as having been issued **to this
+  deployment**, not merely as validly signed.
 - **RCON & secrets:** no server is reachable without an RCON password; RCON MUST NEVER be exposed
   to players — only the control plane speaks it. Secrets (RCON passwords, tokens, API keys) MUST
   come from OpenBao and MUST NEVER be hardcoded or logged.
-- **Payments:** the platform MUST NOT process or store any payment or card data. Payment is
-  handled **out-of-band by the operator** for both paid products; compute is granted only by an
-  **explicit, recorded operator approval**, verified server-side.
+- **Payments:** the platform MUST NOT process or store card or bank details, and MUST NOT move money
+  itself. Payment completes on the payment provider's own surface, out-of-band from the app, which
+  only ever **observes the result**. **Steam trade offers are the first supported method**; more are
+  planned, so the entitlement and granting model MUST remain method-agnostic — adding a method MUST
+  NOT require changing how credits are granted, reserved, or spent. Any credential used to observe
+  payments MUST come from OpenBao, MUST NEVER be committed or logged, and MUST NEVER reach a client.
+  A payment the provider would not complete in time to be useful MUST be refused up front rather
+  than accepted and left hanging.
 **Rationale:** Keeping money entirely outside the app removes PCI scope and payment-fraud surface;
 a single leaked secret or exposed admin channel is still an immediate takeover risk, so identity,
-secrets, and RCON stay locked down by default.
+secrets, and RCON stay locked down by default. Taking payment for something that cannot be delivered
+in time is its own kind of harm.
 
 ### V. Reproducible Images
 The game-server image MUST be built from a pinned SteamCMD / SourceMod recipe and pushed to
@@ -113,29 +151,46 @@ reverted, or reproduced.
 Every server MUST have enforced CPU and memory limits and quotas so one tenant cannot starve the
 node or the cluster. Because scrims cluster into evenings, the number of servers the platform will
 auto-start concurrently MUST be bounded, and a scheduled scrim whose server cannot be placed MUST
-fail visibly to its team rather than silently degrade the cluster. Public exposure is in scope:
-DDoS resilience and abuse controls are first-class requirements (competitive TF2 servers are common
-attack targets), and a publicly listed server requires a Steam Game Server Login Token (GSLT).
+fail visibly to its team rather than silently degrade the cluster — and MUST NOT consume the credits
+reserved for it. Public exposure is in scope: DDoS resilience and abuse controls are first-class
+requirements (competitive TF2 servers are common attack targets), and a publicly listed server
+requires a Steam Game Server Login Token (GSLT).
 **Rationale:** Shared bare-metal capacity means one unbounded or attacked tenant can take down
 paying customers on the same nodes, and scrim traffic is bursty by nature — 8pm Sunday is not the
-moment to discover the IP pool is exhausted.
+moment to discover the IP pool is exhausted. A team charged for a server they never got is worse
+than one told plainly that it could not be placed.
 
 ### VIII. Free to Schedule, Approved to Provision
 Access has two tiers, and only the second one costs money:
 - **Schedule (free):** users authenticate via **Steam OpenID** and link an **RGL** identity; that
-  verified pair is the account. Any such user gets the full scrim surface — listings, proposals,
-  claims, rosters, attendance, opponent discovery — at no charge. Team authority comes from RGL
-  membership, re-checked server-side.
-- **Provision (paid):** no server is created, started, or kept running without an **operator-
-  approved entitlement** — either a **per-scrim server** for one scheduled match or a
-  **season term** for a rented server. The operator approves after handling payment out-of-band;
-  the approval and its scope are authoritative and enforced server-side, never inferred from
-  client input.
+  verified pair is the account. Every account starts **free, holding no credits**, and any such user
+  gets the full scrim surface — listings, proposals, claims, rosters, attendance, opponent discovery
+  — at no charge. Team authority comes from RGL membership, re-checked server-side.
+- **Provision (paid):** no server is created, started, or kept running without **credits** the
+  operator has granted. **A credit is one hour of server runtime** — the single entitlement unit for
+  per-scrim play. Credits are reserved when a server is attached to a scheduled scrim and consumed
+  as that server runs; **extending a running server costs one credit per 30 minutes**. Credits MUST
+  NOT expire, MUST belong to the account that paid for them, and MUST be enforced server-side. The
+  exchange rate between payment and credits is configuration, not constitution, and may move with
+  the market. Credits MUST NOT be spent for time a server did not get: a server that never started,
+  or that failed to be placed, MUST return them.
+- **Granting:** the operator handles payment out-of-band, and **their acceptance of that payment is
+  the recorded granting act.** The platform observes the completed payment and credits the account.
+  It MUST NOT grant credits on a client's assertion of having paid, and MUST NOT grant them for a
+  payment that has not completed. Every movement of a credit balance MUST be recorded with its cause
+  so a disputed balance can be explained without the operator's help.
 - **Binding:** an auto-started server MUST be bound to a specific scheduled scrim and owned by the
-  team that scheduled it, and it MUST NOT outlive its entitlement (per-scrim → destroyed after the
-  match; season → suspend → grace → delete).
-**Rationale:** Free scheduling is what makes the platform worth opening; a server-side approval —
+  team that scheduled it. Its runtime window MUST begin at that scrim's **scheduled start time**,
+  with the server ready to join by then; time spent getting it ready MUST NOT be charged. It MUST
+  NOT outlive its credits (per-scrim → stopped and reclaimed at the end of its window; season →
+  suspend → grace → delete).
+- **Honesty about what is on offer:** an action that spends credits MUST NOT be offered to an account
+  whose balance cannot cover it. The route to obtaining credits MUST be shown in its place, so the
+  absence of the action is never unexplained.
+**Rationale:** Free scheduling is what makes the platform worth opening; a server-side entitlement —
 not a client assertion — decides who gets compute, while payment stays entirely outside the app.
+Pricing runtime by the hour rather than by the match is what lets one payment cover a season of
+scrims, which matters because every payment costs the operator a manual acceptance.
 
 ## Scope & Non-Goals
 
@@ -144,22 +199,26 @@ dedicated servers attached to the scrims they schedule.** A player signs in with
 RGL account, and immediately gets the scrim surface: browse open listings across the league, post
 their own, propose a match to any team in their format's current season, claim someone else's,
 inspect the opposing roster, and track who on their own team is showing up. When a team wants
-somewhere to actually play, they pay the operator out-of-band and the operator approves an
-entitlement: a **per-scrim server** (the entry point — spun up for that match, torn down after) or
-a **season-long rented server** (a permanent home they own and configure for the term). Granted
-servers are publicly joinable and RCON-manageable through the web console.
+somewhere to actually play, they pay the operator out-of-band for **credits** — hours of server
+runtime — and spend them on a scrim they have scheduled: a **per-scrim server** started for that
+match and reclaimed after it, or a **season-long rented server** (a permanent home they own and
+configure for the term). Granted servers are publicly joinable and RCON-manageable through the web
+console.
 
 **In scope (defining):** Steam OpenID sign-in; RGL account/team linking; the free scrim surface
 (dashboard, open listings, directed proposals, claims, rosters, attendance, division-based opponent
-discovery); operator review and approval of paid entitlements; per-scrim server auto-start bound to
-a scheduled match; season-long server rental with its term lifecycle; individual (captain)
-ownership of granted servers; public reachability of granted servers.
+discovery); **credits as the unit of paid server runtime, and the payment methods that grant them —
+Steam trade offers first, others to follow**; a recorded credit ledger; per-scrim server auto-start
+bound to a scheduled match, with extension and a bounded overrun grace; season-long server rental
+with its term lifecycle; individual (captain) ownership of granted servers; public reachability of
+granted servers.
 
 **Out of scope (this phase), and MUST NOT be designed in (though not actively precluded):** in-app
-or automated payment processing (payment is handled out-of-band by the operator); recurring
-subscriptions and pay-as-you-go/hourly billing; in-app role hierarchies beyond RGL membership plus
-the creator of a listing; multi-region; games other than TF2; SLAs or uptime guarantees;
-notifications and reminders.
+or automated payment processing — payment completes on the provider's own surface and the app only
+observes the result, never moving money itself; recurring subscriptions and pay-as-you-go/hourly
+billing beyond the credit model above; refunding credits back into whatever was paid for them;
+in-app role hierarchies beyond RGL membership plus the creator of a listing; multi-region; games
+other than TF2; SLAs or uptime guarantees; notifications and reminders.
 
 Target environment: deploys to the bare-metal `mke` Kubernetes cluster (Flannel CNI); public game
 traffic uses a MetalLB UDP address pool (one `LoadBalancer` Service per server); the control plane is
@@ -172,10 +231,13 @@ from the public `api.rgl.gg` endpoints, cached locally and degraded gracefully w
 Work follows the Spec Kit spec-driven flow, seeded by the documents in `docs/`:
 `/constitution` → `/specify` → `/plan` → `/tasks` → `/implement`. Specs describe user-observable
 behavior; technology and architecture choices live in the plan, not the spec. Build order validates
-the riskiest unproven pieces first. The free scheduling loop is now proven end-to-end in features
-002–004 (Steam sign-in, RGL linking, scrim scheduling, rosters, attendance, opponent discovery);
-the unproven risk that gates revenue is **provisioning bound to a scrim** — MetalLB UDP exposure,
-RCON control, and auto-start/teardown timed to a scheduled match.
+the riskiest unproven pieces first. The free scheduling loop is proven end-to-end in features
+002–004 (Steam sign-in, RGL linking, scrim scheduling, rosters, attendance, opponent discovery).
+Feature 005 specifies the paid surface against the credit model above, deliberately making the
+**payment and entitlement loop real while leaving server provisioning simulated** — so the money
+path can be proven before the cluster work begins. The unproven risk that still gates delivery is
+therefore **provisioning bound to a scrim**: MetalLB UDP exposure, RCON control, and
+auto-start/teardown timed to a scheduled match and to a runtime window.
 
 ## Governance
 
@@ -192,4 +254,4 @@ Compliance: `/plan` runs a Constitution Check gate against these principles; any
 justified in the plan's Complexity Tracking section or the design MUST be simplified. When a
 principle and expedience conflict, the principle wins unless the constitution is formally amended.
 
-**Version**: 3.0.0 | **Ratified**: 2026-07-09 | **Last Amended**: 2026-07-27
+**Version**: 3.1.0 | **Ratified**: 2026-07-09 | **Last Amended**: 2026-07-29

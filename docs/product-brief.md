@@ -135,13 +135,18 @@ constitution.)
 
 ## Open questions to resolve during `/clarify`
 
-- What is the entitlement unit for a per-scrim server — a single credit per match, a
-  bundle, or something else? **Undecided**; the constitution flags this as a follow-up to
-  settle before the first provisioning feature is specified.
-- What's in an ask for a server (which scrim or which term, desired settings) and what
-  does the operator see to approve it?
-- How long before a scrim's scheduled start is its server created, and how long after the
-  match ends is it destroyed?
+- ~~What is the entitlement unit for a per-scrim server?~~ **Settled** in constitution v3.1.0
+  (2026-07-29): a **credit is one hour of server runtime**. 2 Mann Co. Supply Crate Keys grant
+  5 credits; extending a running server costs 1 credit per 30 minutes. The rate is
+  configuration, not constitution, and may move with the market.
+- ~~What does the operator see to approve an ask?~~ **Settled**: nothing to approve by hand.
+  The operator accepting the payment *is* the granting act; the platform observes the
+  completed payment and credits the account. See `specs/005-servers-page/spec.md`.
+- How long before a scrim's scheduled start is its server created? Partly settled: the
+  runtime window **starts at the scheduled time** with the server already joinable, and
+  provisioning time is not charged — so the lead time is an implementation choice, not a
+  pricing one. How long after the window (plus its 15-minute overrun grace) the server is
+  destroyed is still open.
 - Season term length, and how renewal works (extend the same server vs. a new term)?
 - What exactly is the grace period after term end before deletion?
 - Quotas: how many servers can one team hold, and what's the cap on servers the platform
