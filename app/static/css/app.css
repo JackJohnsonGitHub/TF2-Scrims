@@ -47,18 +47,23 @@ a:hover { text-decoration: underline; }
 .btn-sm { padding: 5px 10px; font-size: 13px; }
 
 /* credit balance box (header) — accent-bordered so it reads as currency rather than
-   another nav item, and dimmed at zero so an empty balance is obvious at a glance. */
+   another nav item.
+   The empty state is deliberately NOT dimmed. An earlier version muted it at zero, which
+   had it recede at exactly the moment it should catch the eye: a captain with no credits
+   is the one who needs to notice this and act on it. Zero keeps full contrast and gains a
+   prompt instead. */
 .credit-box {
-  display: inline-flex; align-items: baseline; gap: 5px;
-  padding: 4px 10px; border-radius: 6px;
+  display: inline-flex; align-items: baseline; gap: 6px;
+  padding: 6px 12px; border-radius: 6px;
   background: var(--panel-2); border: 1px solid var(--accent);
   text-decoration: none; line-height: 1.2; white-space: nowrap;
 }
-.credit-box:hover { background: var(--panel); border-color: var(--accent-ink); }
-.credit-num { color: var(--accent); font-weight: 700; font-size: 15px; }
-.credit-label { color: var(--muted); font-size: 12px; }
-.credit-box-empty { border-color: var(--line); }
-.credit-box-empty .credit-num { color: var(--muted); }
+.credit-box:hover { background: var(--panel); box-shadow: 0 0 0 2px rgba(224,123,57,.25); }
+.credit-num { color: var(--accent); font-weight: 700; font-size: 17px; }
+.credit-label { color: var(--ink); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+/* Zero: same contrast, plus a call to action, since the number alone says nothing useful. */
+.credit-box-empty { border-style: dashed; }
+.credit-box-empty .credit-label { color: var(--accent); }
 
 /* landing / sign-in */
 .landing { text-align: center; padding: 60px 24px; }

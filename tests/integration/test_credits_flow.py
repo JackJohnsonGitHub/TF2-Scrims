@@ -503,10 +503,13 @@ def test_the_header_shows_the_credit_balance_on_every_page(client, signed_in, ap
         assert ">7<" in body, f"balance missing on {path}"
 
 
-def test_the_box_is_dimmed_and_singular_where_appropriate(client, signed_in, app):
+def test_the_empty_state_prompts_rather_than_receding(client, signed_in, app):
+    """A zero balance is when this most needs to be noticed, so it keeps full contrast
+    and says what to do instead of just reading "0"."""
     body = client.get("/servers").get_data(as_text=True)
-    assert "credit-box-empty" in body          # zero balance reads as empty
+    assert "credit-box-empty" in body
     assert ">0<" in body
+    assert "buy credits" in body               # a prompt, not a bare number
 
     give_credits(app, PAYER, 1)
     body = client.get("/servers").get_data(as_text=True)

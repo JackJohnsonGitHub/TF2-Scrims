@@ -26,7 +26,7 @@
            href="{{ url_for('credits.index') }}"
            title="{% if credit_balance %}{{ credit_balance }} hour(s) of server time{% else %}You have no credits — click to buy some{% endif %}">
           <span class="credit-num">{{ credit_balance }}</span>
-          <span class="credit-label">{{ 'credit' if credit_balance == 1 else 'credits' }}</span>
+          <span class="credit-label">{% if credit_balance %}{{ 'credit' if credit_balance == 1 else 'credits' }}{% else %}buy credits{% endif %}</span>
         </a>
         {% if current_user.avatar_url %}
           <img class="avatar" src="{{ current_user.avatar_url }}" alt="" width="28" height="28">
