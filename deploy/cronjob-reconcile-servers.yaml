@@ -1,0 +1,76 @@
+# Runtime-window reconciler (feature 005).
+#
+# Advances server state against the clock: scheduled → running at the window start,
+# running → in_grace at the window end, in_grace → stopped once the unpaid grace
+# elapses. Idempotent, so a missed tick self-corrects on the next one.
+#
+# Same reasoning as the payment poller: a CronJob rather than an in-process timer,
+# because Gunicorn's two workers would each run their own copy.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: tf2-hosting-reconcile-servers
+  labels:
+    app: tf2-hosting-app
+    component: servers
+spec:
+  schedule: "* * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 5
+  startingDeadlineSeconds: 45
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      template:
+        spec:
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+          containers:
+            - name: reconcile-servers
+              image: harbor.irulast.com/tf2-hosting/app:dev
+              command: ["flask", "--app", "app", "reconcile-servers"]
+              env:
+                - name: APP_ENV
+                  value: "production"
+                - name: DB_PATH
+                  value: "/data/app.db"
+                - name: APP_SECRET_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: tf2-hosting-secrets
+                      key: app-secret-key
+                # Not used by this command, but Config.validate() requires them in
+                # production — one config contract for every entrypoint beats a
+                # special case that drifts.
+                - name: STEAM_API_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: tf2-hosting-secrets
+                      key: steam-api-key
+                - name: OPERATOR_TRADE_URL
+                  valueFrom:
+                    secretKeyRef:
+                      name: tf2-hosting-secrets
+                      key: operator-trade-url
+              volumeMounts:
+                - name: data
+                  mountPath: /data
+              resources:
+                requests:
+                  cpu: "25m"
+                  memory: "48Mi"
+                limits:
+                  cpu: "150m"
+                  memory: "96Mi"
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+          volumes:
+            - name: data
+              persistentVolumeClaim:
+                claimName: tf2-hosting-data

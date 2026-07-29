@@ -50,6 +50,7 @@ def _view(server: dict) -> dict:
         "minutes_remaining": store.minutes_remaining(server),
         "grace_remaining": store.grace_minutes_remaining(server),
         "explanation": store.stopped_explanation(server),
+        "is_per_scrim": store.is_per_scrim(server),
     }
 
 
@@ -76,22 +77,33 @@ def _price() -> dict:
     return payments.price_summary()
 
 
+def detail_context(server: dict, steam_id: str, *, errors=None,
+                   console_output=None) -> dict:
+    """The full template context for the detail screen.
+
+    One builder, used by the GET, the settings-validation 400, and the console POST.
+    Three call sites assembling this by hand is how one of them ends up missing
+    `balance` and blowing up on `balance < 1` against an Undefined.
+    """
+    balance = credits.available_credits(steam_id)
+    return {
+        "server": _view(server),
+        "is_owner": store.is_owner(server, steam_id),
+        "balance": balance,
+        "can_extend": balance >= 1,
+        "price": _price(),
+        "errors": errors or {},
+        "console_output": console_output or [],
+    }
+
+
 @bp.get("/servers/<int:server_id>")
 @login_required
 def server_detail(server_id):
     steam_id, _team_ids = _viewer()
     server = _server_or_404(server_id)
-    balance = credits.available_credits(steam_id)
-    return render_template(
-        "server_detail.html",
-        server=_view(server),
-        is_owner=store.is_owner(server, steam_id),
-        balance=balance,
-        can_extend=balance >= 1,
-        price=_price(),
-        errors={},
-        console_output=[],
-    )
+    return render_template("server_detail.html",
+                           **detail_context(server, steam_id))
 
 
 @bp.post("/servers/<int:server_id>/extend")
@@ -145,23 +157,24 @@ def update_settings(server_id):
         abort(404)
 
     form = request.form
+    # FR-028: a per-scrim server exists for one hour of one match, so renaming and
+    # resizing it are noise. Its name and slot count are fixed and not accepted from
+    # the form — a posted value for either is ignored rather than trusted.
+    per_scrim = store.is_per_scrim(server)
+    name = server["name"] if per_scrim else form.get("name", "")
+    max_slots = str(server["max_slots"]) if per_scrim else form.get("max_slots", "")
     errors = validate_server_settings(
-        form.get("name", ""),
-        form.get("map", ""),
-        form.get("max_slots", ""),
-        form.get("join_password", ""),
-    )
+        name, form.get("map", ""), max_slots, form.get("join_password", ""))
     if errors:
         return render_template(
-            "server_detail.html", server=_view(server), is_owner=True,
-            errors=errors, console_output=[]
-        ), 400
+            "server_detail.html",
+            **detail_context(server, steam_id, errors=errors)), 400
 
     store.update_settings(
         server_id,
-        name=form["name"].strip(),
+        name=name.strip(),
         map_name=form["map"].strip(),
-        max_slots=int(form["max_slots"]),
+        max_slots=int(max_slots),
         join_password=(form.get("join_password") or "").strip() or None,
     )
     flash("Settings saved.", "info")

@@ -8,23 +8,26 @@ A player signs in with **Steam**, links their **RGL** account, and gets the whol
 surface for nothing: browse every open listing in the league, post their own, propose a
 match to any team in their format's current season, claim someone else's, check the
 opposing roster, and track who on their team is actually showing up. When a team wants
-somewhere to play, they pay the operator out-of-band and the operator approves an
-entitlement — a **per-scrim server** spun up for that match and torn down after it, or a
-**season-long rented server** they own and configure for the term. Granted servers are
-publicly joinable and managed over RCON from the web console.
+somewhere to play, they buy **credits** by trading Mann Co. Supply Crate Keys to the
+operator — 2 keys for 5 credits — and spend them on a scrim they've scheduled. One credit
+runs a server for an hour; extending costs a credit per 30 minutes, and a match that runs
+slightly long gets a free 15-minute grace period. Granted servers are publicly joinable
+and managed over RCON from the web console.
 
 > **Status:** early build. Implemented: `001-basic-flask-app` (UI shell),
-> `002-steam-sign-in`, `003-link-rgl-account` (RGL linking + scrim scheduling), and
-> `004-scrims-dashboard` (combined dashboard, rosters, attendance, division browser).
-> Server provisioning — the paid half — is **not built yet**; it is the next feature.
-> Driven by [GitHub Spec Kit](https://github.com/github/spec-kit).
+> `002-steam-sign-in`, `003-link-rgl-account` (RGL linking + scrim scheduling),
+> `004-scrims-dashboard` (combined dashboard, rosters, attendance, division browser),
+> and `005-servers-page` (credits, Steam-trade payment, runtime windows, the Servers
+> page). **Payment and credits are real; the servers themselves are still simulated** —
+> real cluster provisioning (MetalLB UDP, RCON, auto-start bound to a scrim) is the next
+> feature. Driven by [GitHub Spec Kit](https://github.com/github/spec-kit).
 
 ## Scope of the first version
 
 **Free to schedule, paid to play on.** The core loop: *sign in with Steam → link RGL →
-find or arrange a scrim (free) → optionally pay the operator out-of-band → the operator
-approves an entitlement → a real, joinable, RCON-manageable server on `mke`, bound to that
-scrim and reclaimed when it ends.* Team authority comes from RGL membership; the owner of a
+find or arrange a scrim (free) → optionally trade keys to the operator for credits →
+spend a credit on that scrim → a real, joinable, RCON-manageable server on `mke`, bound to
+that scrim and reclaimed when its time is up.* Team authority comes from RGL membership; the owner of a
 granted server is the individual captain. Explicitly **out of scope for now:** in-app or
 automated payment processing, recurring/hourly billing, in-app role hierarchies beyond RGL
 membership, SLAs, multi-region, non-TF2 games. DDoS resilience and Steam GSLT for public
@@ -39,7 +42,8 @@ listing **are** in scope since servers are publicly reachable (see the constitut
 | Public networking | **MetalLB UDP address pool** — one `LoadBalancer` service per server |
 | Control plane / API | **Python** — Flask (HTTP + web UI) + the Kubernetes Python client (drives the cluster), served by Gunicorn |
 | Authentication | **Sign in with Steam** (Steam OpenID) — the verified Steam identity is the account |
-| Monetization | Teams **request a server**; the operator handles payment **out-of-band** and approves. A server is provisioned only after approval and expires at term end (suspend → grace → delete). The app never processes payments. |
+| Monetization | Teams buy **credits** — 1 credit = 1 hour of server runtime. Paid for out-of-band; the first method is a **Steam trade offer** (2 Mann Co. Supply Crate Keys → 5 credits), with more methods planned. The app observes the completed trade and credits the account; it never moves money. Extending costs 1 credit per 30 min, after a free 15-min overrun grace. |
+| Payment plumbing | The platform polls the operator's received trade offers (`IEconService`), attributes each by partner id, and credits **exactly once** (enforced by a UNIQUE constraint on the Steam offer id). A trade Steam would hold in escrow is **refused up front** — a 15-day hold outlives the scrim being paid for. |
 | Admin console | Web UI relaying **Source RCON** (TCP, game port `27015`) |
 
 The *why* behind these lives in [`docs/tech-context.md`](docs/tech-context.md).
@@ -63,11 +67,10 @@ uvx --from git+https://github.com/github/spec-kit.git specify init --here
 
 ## Running the app
 
-Features so far: `001-basic-flask-app` (navigable UI shell, placeholder data),
-`002-steam-sign-in` (Steam OpenID sign-in + owner-only route guards), and
-`003-link-rgl-account` (link your RGL profile/teams from your verified SteamID and
-schedule scrims between teams — directed propose→accept or open listing→claim;
-schedule-only, no server provisioning). To run it:
+Features so far: `001-basic-flask-app` (UI shell), `002-steam-sign-in` (Steam OpenID
+sign-in + route guards), `003-link-rgl-account` (RGL linking + scrim scheduling),
+`004-scrims-dashboard` (dashboard, rosters, attendance, division browser), and
+`005-servers-page` (credits, Steam-trade payment, the Servers page). To run it:
 
 ```bash
 # local dev (uv is the preferred Python tool on this machine)
@@ -76,14 +79,26 @@ uv pip install -r requirements.txt
 
 # auth config (secrets come from OpenBao in real deploys; export for local dev)
 export APP_SECRET_KEY="$(python -c 'import secrets;print(secrets.token_hex(32))')"
-export STEAM_API_KEY="<your steam web api key>"   # optional; persona/avatar fall back without it
 export APP_BASE_URL="http://localhost:5000"        # OpenID realm / return_to
 export DB_PATH="./app.db"
 
-flask --app app run --debug          # http://127.0.0.1:5000
+# Payment config. STEAM_API_KEY used to be optional (persona/avatar degraded without
+# it) — as of 005 it is load-bearing, because the poller cannot see a single trade
+# without it and every payment would silently never credit. Production refuses to
+# start without both of these; local dev runs fine without them (payment just can't
+# complete). OPERATOR_TRADE_URL contains a token, so treat it as a secret.
+export STEAM_API_KEY="<from OpenBao>"
+export OPERATOR_TRADE_URL="<from OpenBao>"
+
+flask --app app run --debug          # http://localhost:5000
 
 # tests (Steam and RGL are mocked — no network, no key needed)
 python -m pytest -q
+
+# CronJob-driven work, runnable by hand. Never scheduled in-process: Gunicorn runs two
+# workers, so an in-app timer would run twice and race on crediting the same trade.
+flask --app app poll-payments        # trade offers -> payments -> credits
+flask --app app reconcile-servers    # runtime windows: running -> grace -> stopped
 
 # container (iriga-style multi-stage build) — runs Gunicorn, non-root
 docker build -t harbor.irulast.com/tf2-hosting/app:dev .
@@ -93,6 +108,8 @@ curl -fsS http://127.0.0.1:8000/healthz   # -> ok
 
 # deploy to mke (see deploy/secret.example.yaml for the OpenBao-sourced Secret)
 kubectl apply -f deploy/pvc.yaml -f deploy/deployment.yaml -f deploy/service.yaml
+kubectl apply -f deploy/cronjob-poll-payments.yaml \
+               -f deploy/cronjob-reconcile-servers.yaml
 ```
 
 > **Exposure:** real Steam sign-in needs the app reachable by users over **HTTPS** at a
@@ -100,9 +117,15 @@ kubectl apply -f deploy/pvc.yaml -f deploy/deployment.yaml -f deploy/service.yam
 > its own — add ingress/TLS before enabling sign-in for real users.
 
 > **Egress:** RGL linking (003) makes outbound HTTPS calls to `api.rgl.gg` (public,
-> keyless; on link/refresh only). No NetworkPolicy restricts egress on `mke` today, so no
-> manifest change is needed — but keep this dependency in mind if egress is ever locked
-> down. Optional env: `RGL_API_BASE`, `RGL_TIMEOUT_SECONDS` (default 5s).
+> keyless; on link/refresh only). Payment (005) adds calls to
+> `api.steampowered.com/IEconService` from the poller. No NetworkPolicy restricts egress
+> on `mke` today, so no manifest change is needed — but keep both dependencies in mind if
+> egress is ever locked down. Optional env: `RGL_API_BASE`, `RGL_TIMEOUT_SECONDS`
+> (default 5s), `PAYMENT_POLL_SECONDS` (default 60s).
+
+> **Use `localhost`, not `127.0.0.1`,** when exercising sign-in locally: `APP_BASE_URL`
+> is what Steam returns to, and the OpenID §11.1 check requires the returned `return_to`
+> to match it exactly.
 
 ## Docs
 

@@ -40,12 +40,7 @@ def run_command(server_id):
         console_output.append(
             {"kind": "response", "text": "Placeholder response — RCON is not wired up yet."}
         )
+    from .servers import detail_context
     return render_template(
-        "server_detail.html", server=_decorate(server), is_owner=True,
-        errors={}, console_output=console_output
-    )
-
-
-def _decorate(server: dict) -> dict:
-    from .servers import _view
-    return _view(server)
+        "server_detail.html",
+        **detail_context(server, steam_id, console_output=console_output))

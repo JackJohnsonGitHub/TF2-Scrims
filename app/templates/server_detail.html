@@ -30,7 +30,17 @@
   Runs {{ server.window_starts_at | local_dt }} → {{ server.window_ends_at | local_dt }}
   {% if server.scrim_id %}
   · for <a href="{{ url_for('scrims.detail', scrim_id=server.scrim_id) }}">this scrim</a>
+  · reclaimed once its time is up
   {% endif %}
+</p>
+{% endif %}
+
+{% if server.term_ends_at %}
+{# FR-011: a rented server must say when its term ends and what happens then, so it
+   never simply vanishes on its owner. #}
+<p class="muted">
+  Season term ends {{ server.term_ends_at | local_dt }}. After that it's suspended —
+  your config and maps are kept for a grace period so you can renew — and then removed.
 </p>
 {% endif %}
 
@@ -71,21 +81,28 @@
     <h2>Settings</h2>
     <form class="form" method="post" action="{{ url_for('servers.update_settings', server_id=server.id) }}">
       <input type="hidden" name="next" value="{{ request.full_path.rstrip('?') }}">
+      {# FR-028: a per-scrim server lives for one hour of one match, so renaming and
+         resizing it are noise. Only the settings that matter for the match are shown,
+         and the route ignores a posted name or slot count for these. #}
+      {% if not server.is_per_scrim %}
       <label class="field">
         <span>Server name</span>
         <input type="text" name="name" value="{{ server.name }}">
         {% if errors.get('name') %}<small class="err">{{ errors['name'] }}</small>{% endif %}
       </label>
+      {% endif %}
       <label class="field">
         <span>Map</span>
         <input type="text" name="map" value="{{ server.map }}">
         {% if errors.get('map') %}<small class="err">{{ errors['map'] }}</small>{% endif %}
       </label>
+      {% if not server.is_per_scrim %}
       <label class="field">
         <span>Max slots</span>
         <input type="number" name="max_slots" min="1" max="32" value="{{ server.max_slots }}">
         {% if errors.get('max_slots') %}<small class="err">{{ errors['max_slots'] }}</small>{% endif %}
       </label>
+      {% endif %}
       <label class="field">
         <span>Join password <em class="muted">(optional)</em></span>
         <input type="text" name="join_password" value="{{ server.join_password or '' }}">

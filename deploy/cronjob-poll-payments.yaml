@@ -1,0 +1,83 @@
+# Payment poller (feature 005).
+#
+# Deliberately a CronJob rather than an in-process scheduler: the app is served by
+# Gunicorn with 2 sync workers, so anything scheduled inside it would run once per
+# worker — two pollers racing to credit the same trade. `concurrencyPolicy: Forbid`
+# extends that guarantee across ticks if a run overruns.
+#
+# Crediting is also idempotent by database constraint (UNIQUE on the Steam trade offer
+# id), so the constraint is the real backstop and this is defence in depth.
+#
+# Shares the app's PVC, so it must not run while the Deployment is mid-migration.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: tf2-hosting-poll-payments
+  labels:
+    app: tf2-hosting-app
+    component: payments
+spec:
+  # Matches PAYMENT_POLL_SECONDS=60 (~1,440 Steam calls/day against a 100,000/day
+  # budget). Kubernetes cannot schedule finer than a minute.
+  schedule: "* * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  # Keep more failures than successes: a poller that cannot reach Steam exits non-zero,
+  # and those are the logs worth still having.
+  failedJobsHistoryLimit: 5
+  startingDeadlineSeconds: 45
+  jobTemplate:
+    spec:
+      backoffLimit: 0        # the next tick is the retry; no thundering herd on Steam
+      template:
+        spec:
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+          containers:
+            - name: poll-payments
+              image: harbor.irulast.com/tf2-hosting/app:dev
+              command: ["flask", "--app", "app", "poll-payments"]
+              env:
+                - name: APP_ENV
+                  value: "production"
+                - name: DB_PATH
+                  value: "/data/app.db"
+                # Config.validate() fails fast in production without these. Payment
+                # cannot complete without the key, and the failure would otherwise be
+                # silent — every payment simply never credited.
+                - name: APP_SECRET_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: tf2-hosting-secrets
+                      key: app-secret-key
+                - name: STEAM_API_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: tf2-hosting-secrets
+                      key: steam-api-key
+                - name: OPERATOR_TRADE_URL
+                  valueFrom:
+                    secretKeyRef:
+                      name: tf2-hosting-secrets
+                      key: operator-trade-url
+              volumeMounts:
+                - name: data
+                  mountPath: /data
+              resources:
+                requests:
+                  cpu: "25m"
+                  memory: "48Mi"
+                limits:
+                  cpu: "150m"
+                  memory: "96Mi"
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+          volumes:
+            - name: data
+              persistentVolumeClaim:
+                claimName: tf2-hosting-data

@@ -11,8 +11,8 @@ from app import credits, payments, steam_trade
 from app import servers_store as store
 from tests.conftest import rgl_team
 
-PAYER = "76561198065163904"      # partner 104898176
-PARTNER = 104898176
+PAYER = "76561197972611406"      # partner 12345678
+PARTNER = 12345678
 TRADE_URL = f"https://steamcommunity.com/tradeoffer/new/?partner={PARTNER}&token=abc123"
 KEY_NAME = "Mann Co. Supply Crate Key"
 TEAM = 101

@@ -3,9 +3,10 @@
 > **Purpose of this file.** Starting principles that seeded Spec Kit's **`/constitution`**
 > step. The authoritative, current principles live in
 > [`.specify/memory/constitution.md`](../.specify/memory/constitution.md) (currently
-> **v3.0.0** — a free scrim scheduling platform for competitive TF2 teams, with paid dedicated
-> servers attached to the scrims they schedule; payment handled out-of-band by the operator, who
-> records the approval). This file is kept in sync as a readable summary.
+> **v3.1.0** — a free scrim scheduling platform for competitive TF2 teams, with paid dedicated
+> servers attached to the scrims they schedule; paid for in **credits** worth an hour of runtime
+> each, bought out-of-band and granted when the operator accepts the payment). This file is kept
+> in sync as a readable summary.
 
 ## Principles
 
@@ -50,14 +51,18 @@
 8. **Free to schedule, approved to provision.** Users sign in with Steam OpenID and link an RGL
    identity; that verified pair gets the full scrim surface — listings, proposals, claims, rosters,
    attendance, opponent discovery — at no charge. Compute is the paid tier: no server is
-   provisioned, started, or kept running without an **operator-approved entitlement** — a
-   **per-scrim server** for one scheduled match or a **season term** for a rented server (the
-   operator approves after handling payment out-of-band). The requester (team captain)
-   individually owns the server they are granted; an auto-started server is bound to a specific
-   scheduled scrim, owned by the team that scheduled it, and must not outlive its entitlement:
-   per-scrim → destroyed after the match; season → suspend → grace (retain config) → delete &
-   reclaim. The concrete unit granted for a per-scrim server (a single credit vs. a bundle) is
-   **not yet decided**.
+   provisioned, started, or kept running without **credits** the operator has granted. **A credit
+   is one hour of server runtime** — the entitlement unit, settled in v3.1.0. Credits are reserved
+   when a server is attached to a scheduled scrim, consumed as it runs, returned if it never ran,
+   and cost one credit per 30 minutes to extend. Payment happens out-of-band; the operator
+   accepting it **is** the granting act, and the platform observes the completed payment rather
+   than taking a client's word for it. The first payment method is a **Steam trade offer** (2 Mann
+   Co. Supply Crate Keys → 5 credits); more are planned, so the entitlement model stays
+   method-agnostic. The requester (team captain) individually owns the server they are granted; an
+   auto-started server is bound to a specific scheduled scrim, its window starts at that scrim's
+   scheduled time, and it must not outlive its credits: per-scrim → stopped and reclaimed once its
+   window plus a single 15-minute unpaid grace elapses; season → suspend → grace (retain config) →
+   delete & reclaim. The **season-term** purchase unit is still undecided.
 
 ## Non-goals (this phase)
 

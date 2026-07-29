@@ -38,7 +38,7 @@ def capture(monkeypatch, payload=None, status_code=200, bad_json=False):
 KEY_NAME = "Mann Co. Supply Crate Key"
 
 
-def offer_payload(state=steam_trade.STATE_ACCEPTED, keys=2, accountid=104898176,
+def offer_payload(state=steam_trade.STATE_ACCEPTED, keys=2, accountid=12345678,
                   offer_id="7000000001", appid=440, name=KEY_NAME, give=None,
                   escrow_end_date=0):
     """One received offer, shaped the way GetTradeOffers returns them: items carry
@@ -67,8 +67,8 @@ def offer_payload(state=steam_trade.STATE_ACCEPTED, keys=2, accountid=104898176,
 def test_accountid_maps_to_steamid64_and_back():
     # The `partner` in a trade URL is the same 32-bit id as `accountid_other`, which is
     # what makes attributing an incoming trade to an account possible at all.
-    assert steam_trade.steamid64_from_accountid(104898176) == "76561198065163904"
-    assert steam_trade.accountid_from_steamid64("76561198065163904") == 104898176
+    assert steam_trade.steamid64_from_accountid(12345678) == "76561197972611406"
+    assert steam_trade.accountid_from_steamid64("76561197972611406") == 12345678
 
 
 # --- GetTradeHoldDurations -----------------------------------------------------------
@@ -81,10 +81,10 @@ def test_hold_duration_sends_steamid_target_and_the_access_token(monkeypatch):
         "their_escrow": {"escrow_end_duration_seconds": 0},
         "both_escrow": {"escrow_end_duration_seconds": 0}}})
 
-    steam_trade.get_trade_hold_duration("KEY", "76561198065163904", "tok123")
+    steam_trade.get_trade_hold_duration("KEY", "76561197972611406", "tok123")
 
     params = calls[0]["params"]
-    assert params["steamid_target"] == "76561198065163904"
+    assert params["steamid_target"] == "76561197972611406"
     assert params["trade_offer_access_token"] == "tok123"
     assert params["key"] == "KEY"
     assert "steamid" not in params
@@ -158,7 +158,7 @@ def test_offers_are_parsed_with_names_resolved_from_descriptions(monkeypatch):
     offer = offers[0]
     assert offer.offer_id == "7000000001"
     assert offer.state == steam_trade.STATE_ACCEPTED
-    assert offer.partner_steamid64 == "76561198065163904"
+    assert offer.partner_steamid64 == "76561197972611406"
     assert offer.items_to_receive[0].market_hash_name == KEY_NAME
     assert offer.items_to_receive[0].amount == 2
 

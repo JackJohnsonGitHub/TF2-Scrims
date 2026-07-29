@@ -113,3 +113,74 @@ def test_demo_servers_stay_labelled(client, login, link_team, demo_servers):
     on_team(login, link_team)
     demo_servers()
     assert ">DEMO<" in client.get("/servers").get_data(as_text=True)
+
+
+def test_a_per_scrim_server_only_offers_settings_that_matter_for_the_match(
+        client, login, link_team, app, demo_servers):
+    """FR-028. Renaming or resizing a server that exists for one hour of one match is
+    noise, and the route ignores a posted name or slot count rather than trusting it."""
+    from datetime import datetime, timedelta, timezone
+
+    from app.db import get_db
+    steam_id = on_team(login, link_team, as_owner=True)
+    now = datetime.now(timezone.utc)
+    with app.test_request_context():
+        db = get_db()
+        db.execute(
+            "INSERT INTO scrims (id, format, scheduled_at, origin, proposer_team_id,"
+            " status, created_by, created_at, updated_at) VALUES"
+            " (500, 'sixes', ?, 'listing', ?, 'open', ?, ?, ?)",
+            ((now + timedelta(days=1)).isoformat(timespec="seconds"), DEMO_TEAM_ID,
+             steam_id, now.isoformat(timespec="seconds"),
+             now.isoformat(timespec="seconds")))
+        cur = db.execute(
+            """INSERT INTO servers (scrim_id, owner_steam_id, team_id, state, name, map,
+                                    max_slots, created_at, updated_at)
+               VALUES (500, ?, ?, 'running', 'Match server', 'cp_process_final', 24,
+                       ?, ?)""",
+            (steam_id, DEMO_TEAM_ID, now.isoformat(timespec="seconds"),
+             now.isoformat(timespec="seconds")))
+        server_id = cur.lastrowid
+        db.commit()
+
+    body = client.get(f"/servers/{server_id}").get_data(as_text=True)
+    assert 'name="map"' in body                  # the one that matters mid-match
+    assert 'name="join_password"' in body
+    assert 'name="max_slots"' not in body
+    assert 'name="name"' not in body
+
+    # A forged post cannot rename or resize it either.
+    client.post(f"/servers/{server_id}/settings", data={
+        "name": "Hijacked", "map": "cp_snakewater_final1", "max_slots": "4"})
+    with app.test_request_context():
+        from app import servers_store as store
+        server = store.get_server(server_id)
+    assert server["name"] == "Match server"
+    assert server["max_slots"] == 24
+    assert server["map"] == "cp_snakewater_final1"    # the allowed change did apply
+
+
+def test_a_season_term_server_states_when_its_term_ends(client, login, link_team, app):
+    """FR-011: a rented server must never simply vanish on its owner. Display only —
+    the constitution leaves the season-term purchase unit undefined, so nothing can
+    create one of these yet."""
+    from datetime import datetime, timedelta, timezone
+
+    from app.db import get_db
+    steam_id = on_team(login, link_team, as_owner=True)
+    now = datetime.now(timezone.utc)
+    with app.test_request_context():
+        cur = get_db().execute(
+            """INSERT INTO servers (owner_steam_id, team_id, state, name, map,
+                                    max_slots, term_ends_at, created_at, updated_at)
+               VALUES (?, ?, 'running', 'Season home', 'cp_process_final', 24, ?, ?, ?)""",
+            (steam_id, DEMO_TEAM_ID,
+             (now + timedelta(days=30)).isoformat(timespec="seconds"),
+             now.isoformat(timespec="seconds"), now.isoformat(timespec="seconds")))
+        server_id = cur.lastrowid
+        get_db().commit()
+
+    body = client.get(f"/servers/{server_id}").get_data(as_text=True)
+    assert "Season term ends" in body
+    assert "suspended" in body
+    assert 'name="name"' in body      # a rental is configurable, unlike a match server

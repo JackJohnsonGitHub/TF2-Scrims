@@ -168,6 +168,13 @@ def grace_minutes_remaining(server: dict) -> int | None:
     return max(0, int((deadline - _now()).total_seconds() // 60))
 
 
+def is_per_scrim(server: dict) -> bool:
+    """A short-lived match server, as opposed to a season-long rental. Decides which
+    settings are worth offering: renaming or resizing a server that exists for one
+    hour of one match is noise (FR-028)."""
+    return server.get("scrim_id") is not None
+
+
 def stopped_explanation(server: dict) -> str | None:
     """Why this server is not running, in the viewer's terms. A blank state with no
     explanation is the thing this exists to prevent."""

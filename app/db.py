@@ -151,6 +151,10 @@ CREATE TABLE IF NOT EXISTS servers (
     players           INTEGER,
     window_starts_at  TEXT,
     window_ends_at    TEXT,
+    -- Season-term servers only (scrim_id IS NULL). Display-only for now: constitution
+    -- v3.1.0 settles the per-scrim credit but leaves the season-term purchase unit
+    -- undefined, so nothing can create one of these yet.
+    term_ends_at      TEXT,
     grace_used        INTEGER NOT NULL DEFAULT 0,
     demo              INTEGER NOT NULL DEFAULT 0,
     stopped_reason    TEXT,
