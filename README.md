@@ -57,7 +57,7 @@ The docs here are written to feed the Spec Kit spec-driven-development flow:
 To bootstrap Spec Kit in this folder:
 
 ```bash
-cd ~/Irulast/TF2-Server-Hosting
+cd ~/Projects/TF2-Server-Hosting
 uvx --from git+https://github.com/github/spec-kit.git specify init --here
 ```
 
