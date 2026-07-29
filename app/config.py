@@ -53,6 +53,36 @@ class Config:
     # signed out. Default ~30 days; tunable via APP_SESSION_DAYS.
     PERMANENT_SESSION_LIFETIME = timedelta(days=int(os.environ.get("APP_SESSION_DAYS", "30")))
 
+    # --- Payment & credits (feature 005) ----------------------------------------
+    # Where a paying user is sent to open a trade offer. Contains a token, so it is
+    # a secret by constitution IV: from OpenBao, never committed, never rendered
+    # into a page as text — only used as a redirect destination.
+    OPERATOR_TRADE_URL = os.environ.get("OPERATOR_TRADE_URL", "")
+
+    # What counts as payment. Scoped by appid because other games ship items with
+    # confusingly similar names and those must not count (FR-049).
+    PAYMENT_ITEM_NAME = os.environ.get("PAYMENT_ITEM_NAME", "Mann Co. Supply Crate Key")
+    PAYMENT_ITEM_APPID = int(os.environ.get("PAYMENT_ITEM_APPID", "440"))
+    PAYMENT_MIN_KEYS = int(os.environ.get("PAYMENT_MIN_KEYS", "2"))
+
+    # The price, kept configurable so it can move with the market without a code
+    # change (FR-051). 2 keys → 5 credits, i.e. 2.5 credits per key; credits are
+    # granted as floor(keys × rate) so no fractional remainder has to be tracked.
+    CREDITS_PER_KEY = float(os.environ.get("CREDITS_PER_KEY", "2.5"))
+
+    # What a credit buys. One credit runs a server for CREDIT_MINUTES; extending
+    # costs one credit for EXTENSION_MINUTES (deliberately half the rate).
+    CREDIT_MINUTES = int(os.environ.get("CREDIT_MINUTES", "60"))
+    EXTENSION_MINUTES = int(os.environ.get("EXTENSION_MINUTES", "30"))
+
+    # Unpaid overrun buffer past a runtime window. Matches commonly run slightly
+    # long; granted once per server, never once per extension (FR-074).
+    GRACE_MINUTES = int(os.environ.get("GRACE_MINUTES", "15"))
+
+    # How often the payment poller runs. 60s is ~1,440 calls/day against Steam's
+    # 100,000/day budget — about 1.4%.
+    PAYMENT_POLL_SECONDS = int(os.environ.get("PAYMENT_POLL_SECONDS", "60"))
+
     # Deployment environment marker; "production" forbids the insecure SECRET_KEY.
     ENV = os.environ.get("APP_ENV", "development")
 
@@ -63,3 +93,16 @@ class Config:
             raise RuntimeError(
                 "APP_SECRET_KEY is required in production (source it from OpenBao)."
             )
+        # STEAM_API_KEY used to be optional — persona and avatar simply degraded
+        # without it. Payment changes that: without a key the poller cannot see a
+        # single trade, so every payment would sit unpaid forever with nothing in
+        # the app looking wrong. That must be a startup failure, not a silence.
+        if Config.ENV == "production":
+            missing = [name for name in ("STEAM_API_KEY", "OPERATOR_TRADE_URL")
+                       if not os.environ.get(name)]
+            if missing:
+                raise RuntimeError(
+                    f"{', '.join(missing)} required in production: payment cannot "
+                    "complete without them, and the failure would be silent. "
+                    "Source them from OpenBao."
+                )

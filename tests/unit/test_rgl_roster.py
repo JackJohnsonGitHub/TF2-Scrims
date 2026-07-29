@@ -2,9 +2,29 @@
 (app/rgl_store.py) — HTTP mocked, shape per research.md §1 (verified live)."""
 from datetime import datetime, timedelta, timezone
 
+import pytest
 import requests
 
 from app import rgl
+
+
+@pytest.fixture(autouse=True)
+def _known_teams(app):
+    """A roster is only ever cached for a team the app already knows: the sole caller
+    of `ensure_roster` passes a scrim's `proposer_team_id`, which is itself
+    FK-constrained to `rgl_teams`. These tests drive the cache directly, so the team
+    rows they imply now have to exist for real — foreign keys are enforced as of
+    feature 005, having been silently ignored before that."""
+    from app.db import get_db
+    with app.test_request_context():
+        db = get_db()
+        for team_id in (101, 9990001):
+            db.execute(
+                "INSERT OR IGNORE INTO rgl_teams (rgl_team_id, name, format, updated_at)"
+                " VALUES (?, ?, 'sixes', '2026-07-29T00:00:00+00:00')",
+                (team_id, f"Team {team_id}"),
+            )
+        db.commit()
 
 
 class FakeResponse:

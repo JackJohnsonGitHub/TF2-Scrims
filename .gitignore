@@ -9,6 +9,15 @@ venv/
 *.db
 *.sqlite
 
+# Secrets — real k8s Secrets and credentials never land in git (deploy/secret.example.yaml
+# is the committed template). Payment adds a Steam API key to the set of things to keep out.
+*.secret.yaml
+*.secret.yml
+kubeconfig*
+*.key
+*.crt
+*.pem
+
 # Env / editor
 .env*
 *.log
