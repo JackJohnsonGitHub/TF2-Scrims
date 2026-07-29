@@ -47,10 +47,12 @@
     {% if can_use_credits %}
     {# FR-052: choosing a server is part of scheduling. Rendered only when the balance
        can cover it — an action that would fail is not offered (FR-065). #}
-    <label class="field">
+    <label class="field-check">
       <input type="checkbox" name="use_credits" value="1">
-      <span>Start a server for this scrim — 1 credit ({{ credit_minutes }} min).
-        You have {{ balance }}.</span>
+      <span class="check-text">Start a server for this scrim
+        <span class="check-hint">Costs 1 credit for {{ credit_minutes }} minutes, ready when
+          the scrim begins. You have {{ balance }}.</span>
+      </span>
     </label>
     {% else %}
     <p class="muted">Want a server for this?

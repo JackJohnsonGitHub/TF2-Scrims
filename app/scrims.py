@@ -202,7 +202,14 @@ _SELECT = """
            pt.division_name AS proposer_division,
            ot.name AS opponent_name, ot.tag AS opponent_tag,
            EXISTS(SELECT 1 FROM rgl_memberships m
-                  WHERE m.rgl_team_id = s.opponent_team_id) AS opponent_on_platform
+                  WHERE m.rgl_team_id = s.opponent_team_id) AS opponent_on_platform,
+           -- Whether this scrim already has somewhere to play. Lives in the shared
+           -- SELECT so every list that shows a scrim can say so, rather than each
+           -- template growing its own lookup. Cancelled and failed servers do not
+           -- count: those scrims genuinely still need one.
+           EXISTS(SELECT 1 FROM servers v
+                  WHERE v.scrim_id = s.id
+                  AND v.state NOT IN ('cancelled', 'failed')) AS has_server
     FROM scrims s
     JOIN rgl_teams pt ON pt.rgl_team_id = s.proposer_team_id
     LEFT JOIN rgl_teams ot ON ot.rgl_team_id = s.opponent_team_id

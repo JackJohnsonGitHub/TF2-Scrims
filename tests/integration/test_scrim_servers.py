@@ -342,3 +342,76 @@ def test_a_failing_reservation_never_rolls_back_the_scrim(client, app, teams,
     assert scrim["status"] == "pending"
     assert server_for(app, scrim["id"]) is None
     assert balance(app, A) == 5                  # nothing charged
+
+
+# --- the "Server reserved" tag on scrim lists ---------------------------------------
+
+def test_a_scrim_with_a_server_is_tagged_across_the_lists(client, app, teams):
+    """One tag, defined once in _tags.html, so the signal reads the same wherever a
+    scrim is listed."""
+    give_credits(app, A, 5)
+    as_user(client, A)
+    client.post("/scrims/propose", data={
+        "proposer_team_id": TEAM_A, "opponent_team_id": TEAM_B,
+        "scheduled_at": future_form(), "use_credits": "1"})
+
+    for path in ("/", "/scrims"):
+        body = client.get(path).get_data(as_text=True)
+        assert "Server reserved" in body, f"no tag on {path}"
+
+
+def test_a_scrim_without_a_server_is_not_tagged(client, app, teams):
+    as_user(client, A)
+    client.post("/scrims/propose", data={
+        "proposer_team_id": TEAM_A, "opponent_team_id": TEAM_B,
+        "scheduled_at": future_form()})
+
+    for path in ("/", "/scrims"):
+        assert "Server reserved" not in client.get(path).get_data(as_text=True)
+
+
+def test_a_cancelled_server_stops_the_scrim_reading_as_covered(client, app, teams):
+    """A scrim whose server was called off genuinely needs another one, so the tag must
+    not linger — otherwise a team believes it has somewhere to play when it does not."""
+    give_credits(app, A, 5)
+    as_user(client, A)
+    client.post("/scrims/propose", data={
+        "proposer_team_id": TEAM_A, "opponent_team_id": TEAM_B,
+        "scheduled_at": future_form(), "use_credits": "1"})
+    scrim = only_scrim(app)
+    assert "Server reserved" in client.get("/").get_data(as_text=True)
+
+    with app.test_request_context():
+        store.set_state(server_for(app, scrim["id"])["id"], store.CANCELLED,
+                        stopped_reason=store.REASON_CANCELLED)
+
+    assert "Server reserved" not in client.get("/").get_data(as_text=True)
+
+
+def test_a_failed_server_also_stops_the_tag(client, app, teams):
+    give_credits(app, A, 5)
+    as_user(client, A)
+    client.post("/scrims/propose", data={
+        "proposer_team_id": TEAM_A, "opponent_team_id": TEAM_B,
+        "scheduled_at": future_form(), "use_credits": "1"})
+    scrim = only_scrim(app)
+
+    with app.test_request_context():
+        store.mark_failed_to_place(server_for(app, scrim["id"])["id"])
+
+    assert "Server reserved" not in client.get("/").get_data(as_text=True)
+
+
+def test_the_credit_option_renders_as_a_checkbox_row_not_a_stretched_input(
+        client, app, teams):
+    """`.field` is a label-above-input column and stretches inputs to 100%, which left
+    the checkbox floating above its own caption. It needs its own class."""
+    give_credits(app, A, 2)
+    as_user(client, A)
+
+    for path in ("/scrims/new", "/scrims/listings/new"):
+        body = client.get(path).get_data(as_text=True)
+        assert 'class="field-check"' in body, f"checkbox not in a check row on {path}"
+        assert 'name="use_credits"' in body
+        # The old markup put the checkbox inside a plain `.field`.
+        assert '<label class="field">\n      <input type="checkbox"' not in body

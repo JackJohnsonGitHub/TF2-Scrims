@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "_tags.html" as tags %}
 {% block title %}Dashboard · TF2 Hosting{% endblock %}
 {% block screen %}dashboard{% endblock %}
 
@@ -60,6 +61,7 @@
     <div class="rail-item">
       <a href="{{ url_for('scrims.detail', scrim_id=s.id) }}"><strong>{{ s.proposer_name }} vs {{ s.opponent_name }}</strong></a>
       <span class="rail-meta">{{ format_labels.get(s.format, s.format) }} · {{ s.scheduled_at | local_dt }}</span>
+      {{ tags.server_tag(s) }}
       <form method="post" action="{{ url_for('scrims.cancel_scrim', scrim_id=s.id) }}" style="display:inline">
         <input type="hidden" name="next" value="{{ request.full_path.rstrip('?') }}">
         <button class="btn btn-sm" type="submit">Cancel</button>
@@ -77,6 +79,7 @@
     <div class="rail-item">
       <strong>{{ s.proposer_name }}</strong>{% if s.proposer_tag %} <span class="muted">[{{ s.proposer_tag }}]</span>{% endif %} → {{ s.opponent_name }}
       <span class="rail-meta">{{ format_labels.get(s.format, s.format) }} · {{ s.scheduled_at | local_dt }}</span>
+      {{ tags.server_tag(s) }}
       <form method="post" action="{{ url_for('scrims.accept_scrim', scrim_id=s.id) }}" style="display:inline">
         <input type="hidden" name="next" value="{{ request.full_path.rstrip('?') }}">
         <button class="btn btn-sm btn-primary" type="submit">Accept</button>
@@ -95,6 +98,7 @@
     <div class="rail-item">
       {{ s.proposer_name }} → <strong>{{ s.opponent_name }}</strong>
       <span class="rail-meta">{{ format_labels.get(s.format, s.format) }} · {{ s.scheduled_at | local_dt }}</span>
+      {{ tags.server_tag(s) }}
       {% if not s.opponent_on_platform %}
       <span class="rail-meta">Waiting for this team to join the platform to respond.</span>
       {% endif %}
@@ -112,6 +116,7 @@
     <div class="rail-item">
       <a href="{{ url_for('scrims.detail', scrim_id=s.id) }}"><strong>{{ s.proposer_name }}</strong></a>
       <span class="rail-meta">{{ format_labels.get(s.format, s.format) }} · {{ s.scheduled_at | local_dt }} · waiting to be claimed</span>
+      {{ tags.server_tag(s) }}
       <form method="post" action="{{ url_for('scrims.cancel_listing_route', scrim_id=s.id) }}" style="display:inline">
         <input type="hidden" name="next" value="{{ request.full_path.rstrip('?') }}">
         <button class="btn btn-sm" type="submit">Cancel listing</button>
@@ -131,6 +136,7 @@
       <a href="{{ url_for('scrims.detail', scrim_id=s.id) }}">{{ s.proposer_name }}</a>
       {% if s.proposer_tag %}<span class="muted">[{{ s.proposer_tag }}]</span>{% endif %}
       <span class="badge">{{ format_labels.get(s.format, s.format) }}</span>
+      {{ tags.server_tag(s) }}
       <span class="muted">{{ s.scheduled_at | local_dt }}{% if s.proposer_division %} · {{ s.proposer_division }}{% endif %}</span>
     </li>
     {% endfor %}

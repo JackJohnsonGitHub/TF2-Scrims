@@ -114,6 +114,9 @@ h2 { font-size: 19px; }
 .badge-on { background: rgba(63,185,80,.15); color: var(--on); }
 .badge-off { background: rgba(107,114,128,.2); color: var(--off); }
 .badge-demo { background: rgba(224,123,57,.18); color: var(--accent); border: 1px solid var(--accent); letter-spacing: .04em; }
+/* "Server reserved" on a scrim. Green rather than accent-orange: this is a settled,
+   good state, and orange is already the colour of "spend something". */
+.badge-server { background: rgba(63,185,80,.15); color: var(--on); }
 
 /* demo notice banner */
 .demo-banner { margin: 14px 0; padding: 10px 14px; border-radius: 8px; background: rgba(224,123,57,.1); border: 1px dashed var(--accent); color: var(--ink); font-size: 14px; }
@@ -148,7 +151,26 @@ h2 { font-size: 19px; }
 .filter { display: flex; align-items: center; gap: 10px; margin: 4px 0 14px; }
 .filter label { color: var(--muted); font-size: 13px; }
 .err { color: var(--err); display: block; margin-top: 4px; }
-.form-actions { display: flex; align-items: center; gap: 12px; }
+/* Checkbox rows need their own class: `.field` is a label-above-input column and
+   `.field input { width: 100% }` stretches a checkbox across the form, which left it
+   floating above its own caption. Presented as a small card because ticking it spends a
+   credit — a paid choice should look deliberate, not like an afterthought. */
+.field-check {
+  display: flex; align-items: flex-start; gap: 10px;
+  margin-bottom: 16px; padding: 12px 14px; border-radius: 6px;
+  background: var(--panel-2); border: 1px solid var(--line);
+  cursor: pointer; transition: border-color .12s ease;
+}
+.field-check:hover { border-color: var(--accent); }
+.field-check:focus-within { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(224,123,57,.2); }
+.field-check input[type="checkbox"] {
+  width: 16px; height: 16px; flex: none; margin: 1px 0 0;
+  accent-color: var(--accent); cursor: pointer;
+}
+.field-check .check-text { display: block; margin: 0; font-size: 14px; color: var(--ink); }
+.field-check .check-hint { display: block; margin-top: 3px; font-size: 12px; color: var(--muted); }
+
+.form-actions { display: flex; align-items: center; gap: 12px; margin-top: 4px; }
 
 /* flashes */
 .flashes { margin-bottom: 16px; }

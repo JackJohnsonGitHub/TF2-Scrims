@@ -1,0 +1,11 @@
+{# Shared scrim tags.
+
+   Defined once and imported wherever a scrim is listed, so the "has a server" signal
+   reads identically on the dashboard, the scrims page and the listings browser rather
+   than each template inventing its own wording. #}
+
+{% macro server_tag(scrim) %}
+{%- if scrim.has_server -%}
+<span class="badge badge-server" title="A server is already reserved for this scrim">Server reserved</span>
+{%- endif -%}
+{% endmacro %}
