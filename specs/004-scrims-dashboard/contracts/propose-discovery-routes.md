@@ -8,7 +8,7 @@ creation stays `POST /scrims/propose` (003 contract, unchanged).
 
 | Method | Path | Purpose | Maps to |
 |---|---|---|---|
-| GET | `/scrims/new` | **Extended propose form.** Optional query params drive the browser: `team_id` (which of my teams proposes — selects the format and its current `season_id`), `division_id` (chosen division), `opponent_id` (team picked from the browser, pre-selected as opponent). Renders: my-team selector; the kept **quick pick** (on-platform same-format teams via `platform_teams()`); the **division selector** (hydrated divisions of the season, ordered by RGL's division sorting); and, when `division_id` is chosen, that division's team list. | FR-018, FR-019, FR-021 |
+| GET | `/scrims/new` | **Extended propose form.** Optional query params drive the picker: `proposer_team_id` (which of my teams proposes — selects the format and its current `season_id`; `team_id` is the accepted legacy spelling), `q` (name/tag search), `division_id` (chosen division), `opponent_id` (team picked from the list), `clear` (drop the current choice and reopen the list). Renders: my-team selector, then the **opponent picker** — either the chosen team or one candidate list: the on-platform shortlist via `platform_teams()` by default, narrowed by `q` or `division_id`. The remaining query params (`scheduled_at`, `notes`, `use_credits`) are echoed back so the picker's own GET round-trips never discard a part-filled form. | FR-018, FR-019, FR-021 |
 | POST | `/scrims/propose` | Unchanged (003). Accepts any `opponent_team_id` that exists in `rgl_teams` and passes same-format / not-own / future-time validation — including off-platform teams hydrated by the browser. | FR-020 |
 
 ## Behavior contract
@@ -28,10 +28,15 @@ creation stays `POST /scrims/propose` (003 contract, unchanged).
   `pending` proposal; the success flash and the outgoing list note that a response requires
   someone from that team to join and link. Withdraw works as always; accept/decline become
   possible once a member links (membership check is unchanged 003 logic).
-- **Quick pick (FR-021)**: sourced from `platform_teams()` — same-format, membership-backed teams
-  only (never the whole hydrated league). If RGL is unreachable, the division browser area shows a
-  friendly notice (stale directory still browsable if previously built); the quick pick and the
-  rest of the form keep working.
+- **Shortlist (FR-021)**: the picker's default list is sourced from `platform_teams()` — same-format,
+  membership-backed teams only (never the whole hydrated league). If RGL is unreachable, the picker
+  shows a friendly notice and falls back to that shortlist (a previously built directory stays
+  browsable); the rest of the form keeps working.
+- **One control, not two (UI).** Selecting an opponent was originally split between a quick-pick
+  `<select>` and a separate division-browser card rendered *below* the submit button. Both
+  populations are now reached through a single **opponent picker** field: search first, division as
+  the fallback browse, and the choice shown as a labeled team rather than a dropdown option. The
+  behavior above is unchanged — this is where the two lists are surfaced, not what is in them.
 
 ## Response expectations (tests; RGL mocked)
 

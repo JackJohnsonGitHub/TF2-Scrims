@@ -131,6 +131,18 @@ h2 { font-size: 19px; }
 .btn:hover { text-decoration: none; border-color: var(--muted); }
 .btn-primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
 .btn-primary:hover { filter: brightness(1.07); border-color: var(--accent); }
+/* A submit that cannot succeed yet (no opponent picked) still has to look like the
+   primary action, so it dims rather than changing colour. */
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+.btn:disabled:hover { filter: none; border-color: var(--accent); }
+
+/* Off-screen, but still a submit button as far as the form is concerned — that is the
+   point, so `display: none` is wrong here. Used to control which button the Enter key
+   activates; see the comments in scrim_new.html. */
+.offscreen {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0;
+}
 
 /* forms — every control shares one look, including <select>, which otherwise
    renders as a native white widget against the dark theme */
@@ -169,6 +181,49 @@ h2 { font-size: 19px; }
 }
 .field-check .check-text { display: block; margin: 0; font-size: 14px; color: var(--ink); }
 .field-check .check-hint { display: block; margin-top: 3px; font-size: 12px; color: var(--muted); }
+
+/* --- Opponent picker (propose form) -----------------------------------------------
+   Picking an opponent used to be two controls: a quick-pick <select> at the top of the
+   form and a separate "browse by division" card *below* the submit button, each
+   described only in the other's fine print. It is now one field with two states — the
+   team you chose, or one list to choose from. */
+
+/* A field whose control isn't a single input still needs the label to sit like one. */
+.field-label { display: block; margin-bottom: 6px; font-size: 14px; }
+.hint { display: block; margin: 6px 0 0; font-size: 12px; color: var(--muted); }
+.hint[hidden] { display: none; }   /* a class selector otherwise outranks UA [hidden] */
+.form-actions .hint { margin: 0; }
+
+/* Chosen: green-edged like the other settled states in the app, and it answers
+   "who are we playing?" without opening anything. */
+.chosen {
+  display: flex; align-items: center; justify-content: space-between; gap: 14px;
+  padding: 12px 14px; border-radius: 6px;
+  background: var(--panel-2); border: 1px solid var(--on);
+}
+.chosen .cell-sub { margin-top: 2px; }
+
+/* Choosing: search first, division as the fallback browse. */
+.picker { border: 1px solid var(--line); border-radius: 6px; background: var(--panel-2); padding: 12px 14px; }
+.picker-bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.picker-bar input[type="search"], .picker-bar select {
+  padding: 9px 11px; border-radius: 8px; border: 1px solid var(--line);
+  background: var(--panel); color: var(--ink); font: inherit;
+  /* The picker sits inside a `.field`, whose `width: 100%` would put every control on
+     a row of its own. Here they share one bar. */
+  width: auto;
+}
+.picker-bar input[type="search"] { flex: 1 1 220px; min-width: 0; }
+.picker-bar select { flex: 0 1 auto; max-width: 100%; }
+.picker-bar input[type="search"]:focus, .picker-bar select:focus { outline: none; border-color: var(--accent); }
+.picker-note { margin: 10px 0 0; font-size: 13px; }
+/* Bounded height: a division runs to 30+ teams, and the date field below the picker
+   has to stay reachable without scrolling past all of them. */
+.picker-list { max-height: 320px; overflow-y: auto; overflow-x: auto; margin-top: 8px; }
+.table-pick { margin-top: 0; }
+.table-pick td { padding: 8px 10px; vertical-align: middle; }
+.table-pick tr:last-child td { border-bottom: 0; }
+.table-pick td:last-child { text-align: right; white-space: nowrap; }
 
 /* Connect command. Given prominence because it is the single thing every player on both
    teams actually needs from this app once a match starts. */

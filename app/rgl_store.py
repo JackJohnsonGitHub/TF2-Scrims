@@ -305,6 +305,33 @@ def division_browser(season_id: int, division_id: int | None = None
     return divisions, teams
 
 
+def search_teams(format_: str, query: str, season_id: int | None,
+                 limit: int) -> list[sqlite3.Row]:
+    """Name/tag search over the teams the propose picker can reach: everything
+    hydrated for the proposing team's season, plus every on-platform team of that
+    format (a team can be on the platform before its season is hydrated).
+
+    A division is a poor index for "I know who I want to play" — you have to already
+    know which division they're in — so search is the primary way into the directory
+    and the division filter is the fallback for browsing. `season_id = NULL` matches
+    nothing, so a team with no season degrades to on-platform teams only.
+    """
+    like = f"%{query.strip()}%"
+    return get_db().execute(
+        """SELECT t.*, EXISTS(SELECT 1 FROM rgl_memberships m
+                              WHERE m.rgl_team_id = t.rgl_team_id) AS on_platform
+           FROM rgl_teams t
+           WHERE t.format = ?
+             AND (t.season_id = ?
+                  OR EXISTS(SELECT 1 FROM rgl_memberships m
+                            WHERE m.rgl_team_id = t.rgl_team_id))
+             AND (t.name LIKE ? OR IFNULL(t.tag, '') LIKE ?)
+           ORDER BY on_platform DESC, t.name COLLATE NOCASE
+           LIMIT ?""",
+        (format_, season_id, like, like, limit),
+    ).fetchall()
+
+
 def team_on_platform(rgl_team_id: int) -> bool:
     """True when at least one member of the team has an account here (FR-019/020)."""
     row = get_db().execute(

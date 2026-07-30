@@ -14,7 +14,8 @@ from ..attendance import (STATUS_LABELS, attending_count, is_locked,
                           required_players, roster_with_attendance, set_status)
 from ..rgl_store import (division_browser, ensure_roster, ensure_season,
                          get_team, get_user_teams, hydrate_season_teams,
-                         platform_teams, season_progress, team_on_platform)
+                         platform_teams, search_teams, season_progress,
+                         team_on_platform)
 from ..scrims import (ScrimError, accept, cancel, cancel_listing, claim,
                       create_listing, create_proposal, decline, get_scrim,
                       get_scrim_for_viewer, incoming_pending, my_open_listings,
@@ -32,6 +33,10 @@ from .servers import _view as srv_view
 bp = Blueprint("scrims", __name__)
 
 FORMAT_LABELS = {"sixes": "Sixes", "highlander": "Highlander", "prolander": "Prolander"}
+
+# How many search hits the opponent picker renders. A league season is ~100 teams per
+# format; past this the answer is a better query, not a longer list.
+OPPONENT_SEARCH_LIMIT = 40
 
 
 def _steam_id() -> str:
@@ -214,67 +219,144 @@ def _credit_context() -> dict:
             "credit_minutes": current_app.config["CREDIT_MINUTES"]}
 
 
-def _propose_form_context():
-    """Quick pick = on-platform teams only (research §9); the division browser is
-    the path to the rest of the league."""
-    my_teams = get_user_teams(_steam_id())
-    my_ids = {t["rgl_team_id"] for t in my_teams}
-    my_formats = {t["format"] for t in my_teams}
-    opponents = [t for t in platform_teams()
-                 if t["rgl_team_id"] not in my_ids and t["format"] in my_formats]
-    return {"my_teams": my_teams, "opponents": opponents,
-            "format_labels": FORMAT_LABELS, "browse": None,
-            **_credit_context()}
+def _int_value(name: str) -> int | None:
+    """A form/query int, or None when absent or unparseable. `request.values` covers
+    both directions the propose page travels: query args on the picker's GET reloads,
+    form fields when a failed POST re-renders."""
+    try:
+        return int(request.values.get(name) or "")
+    except ValueError:
+        return None
 
 
-def _division_browser_context(my_teams):
-    """US4 (contracts/propose-discovery-routes.md): season directory for the
-    selected proposing team — ensure the season, hydrate one bounded batch, and
-    expose divisions / a division's labeled teams / progress to the template."""
+def _draft() -> dict:
+    """What the user has already typed. Carried through the picker's GET reloads and
+    back out of a rejected POST, so finding an opponent — or fixing a bad date —
+    never costs you the rest of the form."""
+    return {"scheduled_at": request.values.get("scheduled_at", ""),
+            "notes": request.values.get("notes", ""),
+            "use_credits": bool(request.values.get("use_credits"))}
+
+
+def _pick_rows(rows, my_ids, on_platform=None) -> list[dict]:
+    """Normalize candidate teams for the picker. `on_platform` is forced for the
+    shortlist, whose query has no such column because every row in it is on the
+    platform by construction; sqlite3.Row would otherwise silently render as
+    off-platform in Jinja."""
+    out = []
+    for row in rows:
+        team = dict(row)
+        team["on_platform"] = (bool(team.get("on_platform")) if on_platform is None
+                               else on_platform)
+        team["is_mine"] = team["rgl_team_id"] in my_ids
+        out.append(team)
+    return out
+
+
+def _chosen_opponent(proposing, my_ids) -> dict | None:
+    """The opponent currently selected: a fresh pick off the list (`opponent_id`) or
+    the one the form is already carrying (`opponent_team_id`, which survives a
+    rejected POST). Anything `create_proposal` would refuse is ignored here instead,
+    so the form can only ever show a choice that will be accepted."""
+    team_id = _int_value("opponent_id") or _int_value("opponent_team_id")
+    if team_id is None or team_id in my_ids:
+        return None
+    team = get_team(team_id)
+    if team is None or team["format"] != proposing["format"]:
+        return None
+    return {**dict(team), "on_platform": team_on_platform(team_id)}
+
+
+def _opponent_picker(my_teams) -> dict | None:
+    """The single opponent control (FR-019..FR-021 in one place).
+
+    Choosing an opponent used to be split between a quick-pick `<select>` at the top
+    of the form and a whole separate division-browser card *below* the submit button:
+    two controls for one decision, cross-referring to each other in fine print, with
+    the answer to "who am I playing?" hidden inside a dropdown. This builds one field
+    instead — either the chosen team, or one candidate list narrowed by search or
+    division.
+
+    The populations behind it are unchanged: on-platform teams are the default
+    shortlist (research §9), and the season directory reaches the rest of the league.
+    """
     if not my_teams:
         return None
-    team_id = request.args.get("team_id", type=int)
+    my_ids = {t["rgl_team_id"] for t in my_teams}
+    # `proposer_team_id` is the form's own field; `team_id` keeps the documented query
+    # param (and older links) working.
+    team_id = _int_value("proposer_team_id") or _int_value("team_id")
     proposing = next((t for t in my_teams if t["rgl_team_id"] == team_id), my_teams[0])
-    division_id = request.args.get("division_id", type=int)
-    opponent_id = request.args.get("opponent_id", type=int)
+    # "Change" submits `clear`, which drops the choice only. The search and division it
+    # was found through ride along in hidden fields, so the list reopens where the user
+    # left off rather than back at the top.
+    cleared = bool(request.values.get("clear"))
+    query = (request.values.get("q") or "").strip()
+    division_id = _int_value("division_id")
 
-    browse = {
-        "proposing": proposing, "season": None, "divisions": [], "teams": [],
+    picker = {
+        "proposing": proposing, "season": None, "divisions": [], "results": [],
+        "source": "shortlist", "q": query, "chosen": None, "division_name": None,
         "selected_division": division_id, "hydrated": 0, "total": 0,
-        "opponent": None, "rgl_down": False,
+        "truncated": False, "rgl_down": False,
         "no_season": proposing["season_id"] is None,
     }
-    if browse["no_season"]:
-        return browse
-    season = ensure_season(proposing["season_id"])
-    if season is None:
-        browse["rgl_down"] = True
-        return browse
-    hydrate_season_teams(proposing["season_id"], current_app.config["RGL_HYDRATE_BATCH"])
-    browse["season"] = season
-    browse["hydrated"], browse["total"] = season_progress(proposing["season_id"])
-    browse["divisions"], browse["teams"] = division_browser(
-        proposing["season_id"], division_id)
+    if not cleared:
+        picker["chosen"] = _chosen_opponent(proposing, my_ids)
 
-    if opponent_id and opponent_id != proposing["rgl_team_id"]:
-        opponent = get_team(opponent_id)
-        if opponent is not None and opponent["format"] == proposing["format"]:
-            browse["opponent"] = opponent
-    return browse
+    # The directory (divisions + league-wide search) needs a season and RGL; the
+    # shortlist needs neither. An outage therefore narrows the picker rather than
+    # breaking the page.
+    division_teams: list = []
+    if not picker["no_season"]:
+        season = ensure_season(proposing["season_id"])
+        if season is None:
+            picker["rgl_down"] = True
+        else:
+            hydrate_season_teams(proposing["season_id"],
+                                 current_app.config["RGL_HYDRATE_BATCH"])
+            picker["season"] = season
+            picker["hydrated"], picker["total"] = season_progress(
+                proposing["season_id"])
+            picker["divisions"], division_teams = division_browser(
+                proposing["season_id"], division_id)
+            picker["division_name"] = next(
+                (d["division_name"] for d in picker["divisions"]
+                 if d["division_id"] == division_id), None)
+
+    if picker["chosen"] is not None:
+        return picker           # collapsed to the choice; there is no list to build
+    if query:
+        rows = search_teams(proposing["format"], query, proposing["season_id"],
+                            OPPONENT_SEARCH_LIMIT + 1)
+        picker["truncated"] = len(rows) > OPPONENT_SEARCH_LIMIT
+        picker["results"] = _pick_rows(rows[:OPPONENT_SEARCH_LIMIT], my_ids)
+        picker["source"] = "search"
+    elif division_id is not None and picker["season"] is not None:
+        picker["results"] = _pick_rows(division_teams, my_ids)
+        picker["source"] = "division"
+    else:
+        # Scoped to the proposing team's format, so every row shown is a team the
+        # proposal would actually be valid against.
+        picker["results"] = _pick_rows(
+            [t for t in platform_teams(proposing["format"])
+             if t["rgl_team_id"] not in my_ids], my_ids, on_platform=True)
+        picker["source"] = "shortlist"
+    return picker
+
+
+def _propose_form_context():
+    my_teams = get_user_teams(_steam_id())
+    return {"my_teams": my_teams, "picker": _opponent_picker(my_teams),
+            "draft": _draft(), "format_labels": FORMAT_LABELS,
+            **_credit_context()}
 
 
 @bp.get("/scrims/new")
 @login_required
 @rgl_link_required
 def new():
-    ctx = _propose_form_context()
-    browse = _division_browser_context(ctx["my_teams"])
-    ctx["browse"] = browse
-    if browse and browse["opponent"] is not None:
-        # The browsed opponent renders as its own (pre-selected) option.
-        ctx["opponents"] = [t for t in ctx["opponents"]
-                            if t["rgl_team_id"] != browse["opponent"]["rgl_team_id"]]
-    return render_template("scrim_new.html", **ctx)
+    return render_template("scrim_new.html", **_propose_form_context())
 
 
 @bp.post("/scrims/propose")

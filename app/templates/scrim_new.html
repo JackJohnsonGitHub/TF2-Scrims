@@ -2,6 +2,10 @@
 {% block title %}Propose a scrim · TF2 Hosting{% endblock %}
 {% block screen %}scrim-new{% endblock %}
 
+{% set season_label = picker.season.name if picker and picker.season else "your season" %}
+{% set chosen = picker.chosen if picker else None %}
+{% set reload_action = url_for('scrims.new') ~ '#opponent' %}
+
 {% block content %}
 <div class="page-head">
   <h1>Propose a scrim</h1>
@@ -9,46 +13,161 @@
 </div>
 
 <section class="card">
-  <form method="post" action="{{ url_for('scrims.propose') }}">
-    <div class="field">
-      <label for="proposer_team_id">Your team</label>
-      <select id="proposer_team_id" name="proposer_team_id" required>
-        {% for t in my_teams %}
-        <option value="{{ t.rgl_team_id }}" {% if browse and browse.proposing.rgl_team_id == t.rgl_team_id %}selected{% endif %}>{{ t.name }} ({{ format_labels.get(t.format, t.format) }})</option>
-        {% endfor %}
-      </select>
-    </div>
+  {# One form with two destinations: POST sends the proposal, while the picker's own
+     buttons re-GET this page. Because they submit *this* form, everything already
+     typed rides along in the query string and comes back filled in — searching for an
+     opponent no longer wipes the date. #}
+  <form id="propose" method="post" action="{{ url_for('scrims.propose') }}">
+    {% if chosen %}
+    {# Implicit submission (Enter in the date field) must mean "send the proposal". The
+       browser activates the form's FIRST submit button and "Change" sits above the
+       real one, so this off-screen twin claims that slot. No twin when nothing is
+       chosen: sending is disabled anyway and Enter should reach Search instead. #}
+    <button class="offscreen" type="submit" tabindex="-1" aria-hidden="true">Send proposal</button>
+    {% endif %}
 
     <div class="field">
-      <label for="opponent_team_id">Opponent team (same format)</label>
-      <select id="opponent_team_id" name="opponent_team_id" required>
-        {% if browse and browse.opponent %}
-        <option value="{{ browse.opponent.rgl_team_id }}" selected>{{ browse.opponent.name }} — via division browser</option>
-        {% endif %}
-        {% for t in opponents %}
-        <option value="{{ t.rgl_team_id }}">{{ t.name }} ({{ format_labels.get(t.format, t.format) }})</option>
+      <label for="proposer_team_id">Your team</label>
+      <select id="proposer_team_id" name="proposer_team_id" required
+              {% if my_teams | length > 1 %}data-reload{% endif %}>
+        {% for t in my_teams %}
+        <option value="{{ t.rgl_team_id }}" {% if picker and picker.proposing.rgl_team_id == t.rgl_team_id %}selected{% endif %}>{{ t.name }} ({{ format_labels.get(t.format, t.format) }})</option>
         {% endfor %}
       </select>
-      <p class="muted">The quick pick lists teams already on the platform; use the division
-        browser below to find any registered RGL team.</p>
+      {% if my_teams | length > 1 %}
+      <p class="hint">Sets the format and season — the opponent list follows it.
+        <noscript><button class="btn btn-sm" type="submit" formmethod="get" formaction="{{ reload_action }}">Update list</button></noscript>
+      </p>
+      {% endif %}
+    </div>
+
+    <div class="field" id="opponent">
+      <span class="field-label">Opponent</span>
+      {# The one field POST reads. Always present, so a rejected proposal comes back
+         with the choice intact rather than empty. #}
+      <input type="hidden" name="opponent_team_id" value="{{ chosen.rgl_team_id if chosen else '' }}">
+
+      {% if chosen %}
+      {# Carry the filters that found them, so "Change" reopens that same list. #}
+      <input type="hidden" name="q" value="{{ picker.q }}">
+      <input type="hidden" name="division_id" value="{{ picker.selected_division or '' }}">
+      <div class="chosen">
+        <div>
+          <strong>{{ chosen.name }}</strong>{% if chosen.tag %} <span class="muted">[{{ chosen.tag }}]</span>{% endif %}
+          <span class="cell-sub">
+            <span class="nowrap">{{ chosen.division_name or "Division unknown" }}</span> ·
+            {% if chosen.on_platform %}on the platform, so they can accept right away
+            {% else %}not on the platform yet — they'll see this once one of them signs in and links RGL
+            {% endif %}
+          </span>
+        </div>
+        <button class="btn btn-sm" type="submit" name="clear" value="1"
+                formmethod="get" formaction="{{ reload_action }}">Change</button>
+      </div>
+
+      {% else %}
+      <div class="picker">
+        <div class="picker-bar">
+          <input type="search" id="q" name="q" value="{{ picker.q if picker else '' }}"
+                 autocomplete="off" placeholder="Search teams by name or tag…">
+          <button class="btn btn-sm" type="submit" formmethod="get" formaction="{{ reload_action }}">Search</button>
+          {% if picker and picker.divisions %}
+          <select name="division_id" data-reload aria-label="Filter by division">
+            <option value="">All divisions</option>
+            {% for d in picker.divisions %}
+            <option value="{{ d.division_id }}" {% if picker.selected_division == d.division_id %}selected{% endif %}>{{ d.division_name }} ({{ d.team_count }})</option>
+            {% endfor %}
+          </select>
+          <noscript><button class="btn btn-sm" type="submit" formmethod="get" formaction="{{ reload_action }}">Show</button></noscript>
+          {% endif %}
+        </div>
+
+        <p class="picker-note muted">
+          {% if picker.source == 'search' %}
+            {{ picker.results | length }}{% if picker.truncated %}+{% endif %}
+            team{{ '' if picker.results | length == 1 else 's' }} matching
+            “{{ picker.q }}”{% if picker.truncated %} — keep typing to narrow it down{% endif %}.
+          {% elif picker.source == 'division' %}
+            {{ picker.results | length }} team{{ '' if picker.results | length == 1 else 's' }}
+            in {{ picker.division_name or "this division" }}.
+          {% else %}
+            Teams already here — they can accept right away. Search or pick a division to
+            reach any team in {{ season_label }}.
+          {% endif %}
+        </p>
+
+        {% if picker.results %}
+        <div class="picker-list">
+          <table class="table table-pick">
+            <tbody>
+              {% for t in picker.results %}
+              <tr data-search="{{ (t.name ~ ' ' ~ (t.tag or '')) | lower }}">
+                <td>
+                  <strong>{{ t.name }}</strong>{% if t.tag %} <span class="muted">[{{ t.tag }}]</span>{% endif %}
+                  <span class="cell-sub nowrap">{{ t.division_name or "Division unknown" }}</span>
+                </td>
+                <td>
+                  {% if t.on_platform %}<span class="badge badge-on">On the platform</span>
+                  {% else %}<span class="badge badge-off">not on the platform yet</span>{% endif %}
+                </td>
+                <td>
+                  {% if t.is_mine %}
+                  <span class="muted">Your team</span>
+                  {% else %}
+                  <button class="btn btn-sm" type="submit" name="opponent_id" value="{{ t.rgl_team_id }}"
+                          formmethod="get" formaction="{{ reload_action }}">Choose</button>
+                  {% endif %}
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        <p class="hint" id="filter-note" hidden>Nothing in this list matches — press Enter
+          to search all of {{ season_label }}.</p>
+
+        {% elif picker.q %}
+        <p class="hint">No team in {{ season_label }} matches “{{ picker.q }}”. Names come
+          from RGL — try a shorter piece of the name, or the team's tag.</p>
+        {% elif picker.source == 'division' %}
+        <p class="hint">No teams loaded for this division yet{% if picker.hydrated < picker.total %} — refresh to load more{% endif %}.</p>
+        {% else %}
+        <p class="hint">No other {{ format_labels.get(picker.proposing.format, picker.proposing.format) | lower }}
+          team has joined yet. Search or pick a division to propose to any team in
+          {{ season_label }} — they'll get it once one of them signs in and links RGL.</p>
+        {% endif %}
+
+        {% if picker.no_season %}
+        <p class="hint">No season information for this team yet, so the league directory is
+          unavailable — <a href="{{ url_for('rgl.account') }}">refresh your RGL link</a>.</p>
+        {% elif picker.rgl_down %}
+        <p class="hint">We couldn't reach RGL to load the league directory, so only teams
+          already on the platform are listed. Try again in a bit.</p>
+        {% elif picker.hydrated < picker.total %}
+        <p class="hint">Loaded {{ picker.hydrated }} of {{ picker.total }} teams — refresh to load more.</p>
+        {% endif %}
+      </div>
+      {% endif %}
     </div>
 
     <div class="field">
       <label for="scheduled_at">Date &amp; time (your local time)</label>
-      <input type="datetime-local" id="scheduled_at" name="scheduled_at" required>
+      <input type="datetime-local" id="scheduled_at" name="scheduled_at" required
+             value="{{ draft.scheduled_at }}">
       <input type="hidden" name="tz_offset" id="tz_offset" value="0">
     </div>
 
     <div class="field">
       <label for="notes">Notes (optional)</label>
-      <input type="text" id="notes" name="notes" maxlength="200" placeholder="e.g. maps, server preferences">
+      <input type="text" id="notes" name="notes" maxlength="200" value="{{ draft.notes }}"
+             placeholder="e.g. maps, server preferences">
     </div>
 
     {% if can_use_credits %}
     {# FR-052: choosing a server is part of scheduling. Rendered only when the balance
        can cover it — an action that would fail is not offered (FR-065). #}
     <label class="field-check">
-      <input type="checkbox" name="use_credits" value="1">
+      <input type="checkbox" name="use_credits" value="1" {% if draft.use_credits %}checked{% endif %}>
       <span class="check-text">Start a server for this scrim
         <span class="check-hint">Costs 1 credit for {{ credit_minutes }} minutes, ready when
           the scrim begins. You have {{ balance }}.</span>
@@ -59,83 +178,54 @@
       <a href="{{ url_for('credits.index') }}">Buy credits</a> — scheduling itself is
       free either way.</p>
     {% endif %}
-    <button class="btn btn-primary" type="submit">Send proposal</button>
+
+    <div class="form-actions">
+      <button class="btn btn-primary" type="submit" {% if not chosen %}disabled{% endif %}>Send proposal</button>
+      {% if not chosen %}<span class="hint">Choose an opponent above first.</span>{% endif %}
+    </div>
+
+    {# Last in the form so it never becomes the Enter-key default; fired only by the
+       script below, when a select that re-scopes the list changes. #}
+    <button id="picker-reload" class="offscreen" type="submit" tabindex="-1" aria-hidden="true"
+            formmethod="get" formaction="{{ reload_action }}">Update list</button>
   </form>
 </section>
-
-{% if browse %}
-<section class="card">
-  <h2>Browse RGL teams by division</h2>
-
-  {% if my_teams | length > 1 %}
-  <form method="get" action="{{ url_for('scrims.new') }}" class="filter">
-    <label for="browse_team_id">Browse as</label>
-    <select id="browse_team_id" name="team_id" onchange="this.form.submit()">
-      {% for t in my_teams %}
-      <option value="{{ t.rgl_team_id }}" {% if browse.proposing.rgl_team_id == t.rgl_team_id %}selected{% endif %}>{{ t.name }} ({{ format_labels.get(t.format, t.format) }})</option>
-      {% endfor %}
-    </select>
-    <noscript><button class="btn btn-sm" type="submit">Go</button></noscript>
-  </form>
-  {% endif %}
-
-  {% if browse.no_season %}
-  <p class="muted">No season information for this team yet — refresh your RGL link on the
-    <a href="{{ url_for('rgl.account') }}">account page</a>.</p>
-  {% elif browse.rgl_down %}
-  <p class="muted">We couldn't reach RGL to load the division directory. The quick pick above
-    still works — try again in a bit.</p>
-  {% else %}
-
-  {% if browse.hydrated < browse.total %}
-  <p class="muted">Loaded {{ browse.hydrated }} of {{ browse.total }} teams — refresh to load more.</p>
-  {% endif %}
-
-  <form method="get" action="{{ url_for('scrims.new') }}" class="filter">
-    <input type="hidden" name="team_id" value="{{ browse.proposing.rgl_team_id }}">
-    <label for="division_id">Division — {{ browse.season.name }}</label>
-    <select id="division_id" name="division_id" onchange="this.form.submit()">
-      <option value="">Choose a division…</option>
-      {% for d in browse.divisions %}
-      <option value="{{ d.division_id }}" {% if browse.selected_division == d.division_id %}selected{% endif %}>{{ d.division_name }} ({{ d.team_count }} teams)</option>
-      {% endfor %}
-    </select>
-    <noscript><button class="btn btn-sm" type="submit">Show</button></noscript>
-  </form>
-
-  {% if browse.teams %}
-  <table class="table">
-    <thead><tr><th>Team</th><th>Division</th><th></th><th></th></tr></thead>
-    <tbody>
-      {% for t in browse.teams %}
-      <tr>
-        <td>{{ t.name }}{% if t.tag %} <span class="muted">[{{ t.tag }}]</span>{% endif %}</td>
-        <td>{{ t.division_name or "—" }}</td>
-        <td>
-          {% if t.on_platform %}<span class="badge badge-on">On the platform</span>
-          {% else %}<span class="badge badge-off">not on the platform yet</span>{% endif %}
-        </td>
-        <td>
-          {% if t.rgl_team_id == browse.proposing.rgl_team_id %}
-          <span class="muted">Your team</span>
-          {% else %}
-          <a class="btn btn-sm" href="{{ url_for('scrims.new', team_id=browse.proposing.rgl_team_id, division_id=browse.selected_division, opponent_id=t.rgl_team_id) }}">Select as opponent</a>
-          {% endif %}
-        </td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  {% elif browse.selected_division %}
-  <p class="muted">No teams loaded for this division yet{% if browse.hydrated < browse.total %} — refresh to load more{% endif %}.</p>
-  {% endif %}
-
-  {% endif %}
-</section>
-{% endif %}
 
 <script>
-  // Store scrim times in UTC: submit the browser's offset so the server converts.
-  document.getElementById("tz_offset").value = new Date().getTimezoneOffset();
+  // Kept out of the global scope: this page's other scripts (and the shared ones in
+  // base.html) share one namespace, and a stray top-level `const` here is a syntax
+  // error away from taking the whole page's JS down with it.
+  (function () {
+    // Store scrim times in UTC: submit the browser's offset so the server converts.
+    document.getElementById("tz_offset").value = new Date().getTimezoneOffset();
+
+    const form = document.getElementById("propose");
+    const reload = document.getElementById("picker-reload");
+
+    // Changing your team or the division re-GETs the page for a re-scoped list. Without
+    // JS the visible "Update list" / "Show" buttons do exactly the same thing.
+    for (const el of form.querySelectorAll("[data-reload]")) {
+      el.addEventListener("change", () => form.requestSubmit(reload));
+    }
+
+    // Typing narrows the rows already on the page, instantly. Reaching teams *outside*
+    // the current list still takes a server search (Enter, or the Search button), so an
+    // empty local filter says so rather than looking like "no such team".
+    const search = document.getElementById("q");
+    const rows = [...form.querySelectorAll(".table-pick tbody tr")];
+    const note = document.getElementById("filter-note");
+    if (search && note && rows.length) {
+      search.addEventListener("input", () => {
+        const needle = search.value.trim().toLowerCase();
+        let shown = 0;
+        for (const tr of rows) {
+          const hit = !needle || tr.dataset.search.includes(needle);
+          tr.hidden = !hit;
+          if (hit) shown++;
+        }
+        note.hidden = !(needle && shown === 0);
+      });
+    }
+  })();
 </script>
 {% endblock %}
