@@ -72,10 +72,18 @@ uvx --from git+https://github.com/github/spec-kit.git specify init --here
 
 Features so far: `001-basic-flask-app` (UI shell), `002-steam-sign-in` (Steam OpenID
 sign-in + route guards), `003-link-rgl-account` (RGL linking + scrim scheduling),
-`004-scrims-dashboard` (dashboard, rosters, attendance, division browser), and
-`005-servers-page` (credits, Steam-trade payment, the Servers page). To run it:
+`004-scrims-dashboard` (dashboard, rosters, attendance, division browser),
+`005-servers-page` (credits, Steam-trade payment, the Servers page), and
+`006-postgres-datastore` (PostgreSQL, concurrent writers, backups, multi-replica deploys).
+To run it:
 
 ```bash
+# The store. PostgreSQL is the only engine — dev, tests, and deploy alike (006/FR-025),
+# so this container is a prerequisite for running the app *and* the test suite.
+docker run -d --name tf2-pg -p 5432:5432 \
+  -e POSTGRES_PASSWORD=dev -e POSTGRES_USER=tf2app -e POSTGRES_DB=tf2hosting \
+  postgres:17-alpine
+
 # local dev (uv is the preferred Python tool on this machine)
 uv venv .venv && . .venv/bin/activate
 uv pip install -r requirements.txt
@@ -83,7 +91,7 @@ uv pip install -r requirements.txt
 # auth config (secrets come from OpenBao in real deploys; export for local dev)
 export APP_SECRET_KEY="$(python -c 'import secrets;print(secrets.token_hex(32))')"
 export APP_BASE_URL="http://localhost:5000"        # OpenID realm / return_to
-export DB_PATH="./app.db"
+export DATABASE_URL="postgresql://tf2app:dev@localhost:5432/tf2hosting"
 
 # Payment config. STEAM_API_KEY used to be optional (persona/avatar degraded without
 # it) — as of 005 it is load-bearing, because the poller cannot see a single trade
@@ -108,16 +116,128 @@ docker build -t harbor.irulast.com/tf2-hosting/app:dev .
 docker run --rm -p 8000:8000 -e APP_SECRET_KEY=dev -e APP_BASE_URL=http://localhost:8000 \
   harbor.irulast.com/tf2-hosting/app:dev
 curl -fsS http://127.0.0.1:8000/healthz   # -> ok
-
-# deploy to mke (see deploy/secret.example.yaml for the OpenBao-sourced Secret)
-kubectl apply -f deploy/pvc.yaml -f deploy/deployment.yaml -f deploy/service.yaml
-kubectl apply -f deploy/cronjob-poll-payments.yaml \
-               -f deploy/cronjob-reconcile-servers.yaml
 ```
 
+### Deploying
+
+**There are no Kubernetes manifests in this repo, and that is deliberate.** This repo is
+the app's source; its deployed state lives in
+[`guilding-for-the-folks/managed-services`](https://github.com/guilding-for-the-folks/managed-services)
+under `cluster/flux/`, which Flux applies to the `wac-fortress` namespace on Irulast's
+bare-metal `mke` cluster. Nothing is ever applied by hand — the credentials that reach that
+namespace belong to a Flux ServiceAccount, not to a person.
+
+A code change ships without anyone editing a manifest:
+
+1. Merge to `main` here.
+2. A workflow builds on Irulast's `wac-fortress-builds` ARC runners and pushes
+   `harbor.irulast.com/wac-fortress/app:vMAJOR.MINOR.<timestamp>`.
+3. Flux's `ImagePolicy` picks up the new tag within ~5 minutes and commits it into
+   `managed-services` itself, as `flux-image-automation`.
+4. The Deployment rolls. Roll back by reverting that commit.
+
+Infrastructure changes — replica counts, env vars, resource limits, the CronJob schedules —
+are edits to `cluster/flux/` in that repo instead.
+
+The namespace, the RBAC and network boundary, TLS, the OpenBao `SecretStore`, the image
+pull credential, the backup bucket, and the Flux objects that apply any of it are Irulast's
+to own, in their cluster repo (`applications/mke/tenants/wac-fortress/`). The tenant
+ServiceAccount cannot create them by design, so a stray copy fails the whole Kustomization
+rather than partially applying.
+
+### The store
+
+PostgreSQL 17, via the CloudNativePG operator (`cluster/flux/postgres.yaml` in
+`managed-services`). **It is the only engine** — development, tests, and deployment all run against it, with no
+compatibility layer and no second dialect, so no query can be valid in one environment and
+invalid in another. Running the test suite therefore requires a local store; the suite says
+so plainly and tells you the `docker run` line if it cannot reach one.
+
+Schema changes are ordered `.sql` files in [`migrations/`](migrations/), applied at startup
+under a Postgres advisory lock — so several app copies starting at once initialise exactly
+once. See [`migrations/README.md`](migrations/README.md) for the rules; the important one
+is that a migration already applied anywhere is never edited, only superseded.
+
+Configuration: `DATABASE_URL` (required in production, from OpenBao — it contains a
+password), plus optional `DB_POOL_MIN` (1), `DB_POOL_MAX` (4) and `DB_CONNECT_TIMEOUT` (5s).
+`/healthz` does a real `SELECT 1`, so a pod that cannot reach the store is taken out of the
+Service rather than serving pages that render normally and show nothing.
+
+### Backups
+
+CloudNativePG backs the store up two ways at once, both to `s3://wac-fortress-backups`
+on Irulast's SeaweedFS: **continuous WAL archiving**, and a **daily base backup at 09:00
+UTC** — mid-morning in the US, deliberately outside the weekday-evening hours when scrims
+run. `retentionPolicy: 14d` keeps a fortnight of base backups plus the WAL linking them.
+Together they give point-in-time recovery, not just a nightly snapshot.
+
+The bucket, the S3 identity scoped to it, and the
+`wac-fortress-postgres-s3-credentials` Secret are created by Irulast's
+`seaweedfs-controller` from a `SeaweedFSBucket` CR in the operator's cluster repo. **Never
+add an ExternalSecret for that Secret name** — with `creationPolicy: Owner` it would
+overwrite the controller's keys, and every archive push would 403 while CNPG went on
+reporting the Cluster `Ready`.
+
+That is the failure mode worth engineering against, because a store with a broken archiver
+looks exactly like a healthy one. A `Last Archived` timestamp is the only real check:
+
+```bash
+kubectl -n wac-fortress get cluster wac-fortress-postgres -o wide   # expect a recent time
+kubectl -n wac-fortress get backups --sort-by=.status.startedAt
+kubectl -n wac-fortress get seaweedfsbucket                        # Phase: Ready
+```
+
+> **A backup is secret-bearing.** It contains `steam_trade_links` — each user's trade URL
+> and its access token. Treat the bucket as operator-only, and do not copy backups
+> off-cluster casually. (The RCON/administrative password is absent from the database by
+> construction, so it is absent from every backup too.)
+
+### Restore
+
+Recovery is an operator action, deliberately — there is no automatic failover. With CNPG
+you do not restore *into* the running Cluster; you declare a **new** Cluster that
+bootstraps by recovering from the object store, verify it, then cut over. The original
+stays untouched and is the fallback if the recovery is wrong.
+
+```bash
+# 1. Stop every writer so nothing races the cutover.
+kubectl -n wac-fortress scale deployment/tf2-hosting-app --replicas=0
+kubectl -n wac-fortress patch cronjob/tf2-hosting-poll-payments     -p '{"spec":{"suspend":true}}'
+kubectl -n wac-fortress patch cronjob/tf2-hosting-reconcile-servers -p '{"spec":{"suspend":true}}'
+
+# 2. Pick a recovery point.
+kubectl -n wac-fortress get backups --sort-by=.status.startedAt
+
+# 3. Declare a recovery Cluster in managed-services — spec.bootstrap.recovery pointing at
+#    the same barmanObjectStore, optionally with recoveryTarget.targetTime for PITR.
+#    Push it; Flux creates the new Cluster alongside the old one.
+
+# 4. Verify the recovered store BEFORE cutting over: every balance equals the sum of that
+#    account's restored ledger entries.
+kubectl -n wac-fortress exec -it wac-fortress-postgres-recovery-1 -- psql -U postgres -d tf2hosting -c \
+  "SELECT steam_id, SUM(delta) AS balance FROM credit_ledger GROUP BY 1 ORDER BY 1;"
+
+# 5. Cut over: point the app's DATABASE_URL at the recovered Cluster's -rw Service, then
+#    bring the writers back.
+kubectl -n wac-fortress scale deployment/tf2-hosting-app --replicas=2
+kubectl -n wac-fortress patch cronjob/tf2-hosting-poll-payments     -p '{"spec":{"suspend":false}}'
+kubectl -n wac-fortress patch cronjob/tf2-hosting-reconcile-servers -p '{"spec":{"suspend":false}}'
+```
+
+Step 4 holds by construction — no cached total exists that could survive a restore
+disagreeing with the rows explaining it — but check it anyway, because "by construction" is
+a claim until something verifies it. Locally the same rehearsal runs against the dev
+container and takes seconds; see
+[`specs/006-postgres-datastore/quickstart.md`](specs/006-postgres-datastore/quickstart.md)
+Scenario 7.
+
 > **Exposure:** real Steam sign-in needs the app reachable by users over **HTTPS** at a
-> stable `APP_BASE_URL` (the OpenID realm). The 001 `ClusterIP` Service isn't enough on
-> its own — add ingress/TLS before enabling sign-in for real users.
+> stable `APP_BASE_URL` (the OpenID realm). That is the HTTPRoute on Irulast's shared
+> `mke-gateway`, terminating a cert issued for `wac-fortress.com`. `APP_BASE_URL`, the
+> route's hostname, and the DNS record must agree exactly — Steam compares the realm
+> against the origin it redirects back to, so a mismatch fails sign-in outright rather
+> than degrading. The apex record must also be **DNS-only** (grey cloud): Cloudflare
+> proxying would terminate TLS at Cloudflare instead of at the gateway.
 
 > **Egress:** RGL linking (003) makes outbound HTTPS calls to `api.rgl.gg` (public,
 > keyless; on link/refresh only). Payment (005) adds calls to

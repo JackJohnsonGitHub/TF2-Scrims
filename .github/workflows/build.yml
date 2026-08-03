@@ -1,0 +1,87 @@
+name: build
+
+# Builds the app image on Irulast's mke cluster and publishes it to Harbor.
+# Nothing here deploys: pushing a new tag is what triggers a deploy, indirectly.
+#
+#   push to main
+#     -> this workflow, on the wac-fortress-builds ARC runner
+#     -> harbor.irulast.com/wac-fortress/app:v0.1.<UTC timestamp>
+#     -> Flux ImagePolicy in the Irulast cluster repo picks up the new tag
+#     -> ImageUpdateAutomation commits it into guilding-for-the-folks/managed-services
+#     -> the Deployment and both CronJobs roll together
+#
+# NO REGISTRY CREDENTIALS LIVE HERE, and none should ever be added. The runner
+# mounts a Harbor push robot scoped to the wac-fortress project as its docker
+# config, so `buildkit-build` is already authenticated. There is deliberately no
+# docker/login-action and no HARBOR_* secret on this org — the credential is
+# never exposed to workflow code, and it cannot reach another tenant's project.
+
+on:
+  push:
+    branches: [main]
+  # Manual re-run, for rebuilding an unchanged commit (base image CVE fix, or
+  # re-minting a tag after a failed push). Every run stamps a fresh timestamp,
+  # so this never overwrites an existing tag.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  # REQUIRED, and the failure without it is misleading. Every shared action
+  # begins with a license check that mints an OIDC token and asks the
+  # build-telemetry collector whether this org is licensed; with no id-token
+  # permission the runner cannot mint one and the FIRST STEP of every action
+  # fails looking like a generic auth error. cosign keyless signing in
+  # buildkit-build needs the same permission independently.
+  id-token: write
+
+# One build at a time per branch. Two concurrent pushes would each mint a
+# distinct tag and both would land in Harbor; the ImagePolicy picks the
+# alphabetically-last, so the earlier commit could win if it finished second.
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    # SINGLE LABEL, not a list. ARC scale-set runners register only the scale-set
+    # name — they do NOT register `self-hosted` — so `[self-hosted, wac-fortress-builds]`
+    # matches no runner and the job hangs queued forever with no error.
+    runs-on: wac-fortress-builds
+
+    # buildctl-daemonless runs in this container; the worker pod is privileged so
+    # it can bind-mount its runc snapshots. Pinned rather than floating: a
+    # BuildKit bump changing snapshot behaviour should be a deliberate commit.
+    container:
+      image: moby/buildkit:v0.18.2
+
+    steps:
+      # Shell-based checkout — actions/checkout@v4 needs Node.js, which this
+      # container does not have.
+      - uses: guilding-for-the-folks/shared-actions/checkout@v2
+
+      # Reads VERSION (repo root, "MAJOR.MINOR") and appends a UTC timestamp to
+      # produce vMAJOR.MINOR.YYYYMMDDHHMMSS. That exact shape is load-bearing:
+      # the ImagePolicy matches ^v\d+\.\d+\.\d{14}$ and orders alphabetically, so
+      # the fixed-width timestamp is what makes "newest" mean newest. A tag in
+      # any other shape is published to Harbor and then silently ignored.
+      - id: version
+        uses: guilding-for-the-folks/shared-actions/version-stamp@v2
+
+      # Defaults are all correct and deliberately not overridden: cosign keyless
+      # signing, CycloneDX SBOM attestation, Trivy scan failing on CRITICAL, and
+      # telemetry, are on. If a CRITICAL CVE blocks a build, the fix is a waiver
+      # file under .build-platform/waivers/ with a justification — not turning
+      # the scan off.
+      - uses: guilding-for-the-folks/shared-actions/buildkit-build@v2
+        with:
+          destination: harbor.irulast.com/wac-fortress/app:${{ steps.version.outputs.tag }}
+
+      # Surfaced in the job summary so the tag is visible without digging into
+      # Harbor — it is also what will appear in the automation's commit message
+      # on the managed-services repo a few minutes later.
+      - name: Summary
+        if: always()
+        shell: sh
+        run: |
+          echo "### Image" >> "$GITHUB_STEP_SUMMARY"
+          echo '`harbor.irulast.com/wac-fortress/app:${{ steps.version.outputs.tag }}`' >> "$GITHUB_STEP_SUMMARY"
