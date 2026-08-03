@@ -19,9 +19,10 @@ name: build
 on:
   push:
     branches: [main]
-  # Manual re-run, for rebuilding an unchanged commit (base image CVE fix, or
-  # re-minting a tag after a failed push). Every run stamps a fresh timestamp,
-  # so this never overwrites an existing tag.
+  # Manual re-run, for re-minting a tag after a failed push. Every run stamps a fresh
+  # timestamp, so this never overwrites an existing tag. NOTE: this no longer picks up
+  # base-image CVE fixes — the Dockerfile pins the base by digest, so rebuilding an
+  # unchanged commit reproduces the same base. Bumping the base is a commit.
   workflow_dispatch:
 
 permissions:
@@ -67,14 +68,23 @@ jobs:
       - id: version
         uses: guilding-for-the-folks/shared-actions/version-stamp@v2
 
-      # Defaults are all correct and deliberately not overridden: cosign keyless
-      # signing, CycloneDX SBOM attestation, Trivy scan failing on CRITICAL, and
-      # telemetry, are on. If a CRITICAL CVE blocks a build, the fix is a waiver
-      # file under .build-platform/waivers/ with a justification — not turning
-      # the scan off.
+      # cosign keyless signing, CycloneDX SBOM attestation, Trivy scan failing on
+      # CRITICAL, and telemetry are all on by default and deliberately left alone.
+      # If a CRITICAL CVE blocks a build, the fix is a waiver file under
+      # .build-platform/waivers/ with a justification — not turning the scan off.
+      #
+      # scan-skip-base-layers IS overridden, to false. Its default is true, and that
+      # default silently ships images this cluster cannot run: the verdict script drops
+      # every os-pkgs finding before applying the CRITICAL gate, so CI grades only the
+      # Python dependencies. Harbor's own Trivy scans OS packages too, and the project
+      # policy refuses the pull at 412 PROJECTPOLICYVIOLATION. That mismatch is exactly
+      # how v0.1.20260803221659 went green here and then sat in ImagePullBackOff — the
+      # 4 criticals were all in perl-base, in the base layer CI wasn't looking at.
+      # Keep this false so the gate that fails is the build, not the deploy.
       - uses: guilding-for-the-folks/shared-actions/buildkit-build@v2
         with:
           destination: harbor.irulast.com/wac-fortress/app:${{ steps.version.outputs.tag }}
+          scan-skip-base-layers: 'false'
 
       # Surfaced in the job summary so the tag is visible without digging into
       # Harbor — it is also what will appear in the automation's commit message
