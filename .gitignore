@@ -5,7 +5,9 @@ __pycache__/
 venv/
 .pytest_cache/
 
-# Local data — SQLite user DB lives on a PVC in deploys, never in git
+# Local data. The store is PostgreSQL as of feature 006 and lives in a container, not in
+# a file — these patterns stay only so a stray database file from before the cutover can
+# never be committed. Nothing the app reads or writes matches them.
 *.db
 *.sqlite
 

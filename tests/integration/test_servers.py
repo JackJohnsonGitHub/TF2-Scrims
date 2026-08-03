@@ -49,7 +49,7 @@ def test_unknown_live_state_is_not_reported_as_stopped(client, login, link_team,
         get_db().execute(
             """INSERT INTO servers (owner_steam_id, team_id, state, name, map,
                                     max_slots, players, created_at, updated_at)
-               VALUES (?,?, 'unknown', 'Mystery', 'cp_x', 24, NULL, ?, ?)""",
+               VALUES (%s,%s, 'unknown', 'Mystery', 'cp_x', 24, NULL, %s, %s)""",
             (steam_id, DEMO_TEAM_ID, now, now))
         get_db().commit()
 
@@ -100,7 +100,9 @@ def test_the_admin_password_is_never_in_a_response(client, login, link_team,
     ids = demo_servers()
 
     with app.test_request_context():
-        columns = {r[1] for r in get_db().execute("PRAGMA table_info(servers)")}
+        columns = {r["column_name"] for r in get_db().execute(
+            "SELECT column_name FROM information_schema.columns"
+            " WHERE table_name = 'servers'")}
     assert not {"rcon_password", "admin_password"} & columns
 
     for path in ("/servers", f"/servers/{ids[0]}"):
@@ -127,20 +129,25 @@ def test_a_per_scrim_server_only_offers_settings_that_matter_for_the_match(
     with app.test_request_context():
         db = get_db()
         db.execute(
+            # An explicit id does not advance the identity sequence, so a later
+            # auto-generated scrim in the same test would collide (research R7). Safe
+            # here: 500 is far above the sequence, which per-test RESTART IDENTITY puts
+            # back at 1, and this test generates no other scrim. Keep it that way.
             "INSERT INTO scrims (id, format, scheduled_at, origin, proposer_team_id,"
             " status, created_by, created_at, updated_at) VALUES"
-            " (500, 'sixes', ?, 'listing', ?, 'open', ?, ?, ?)",
+            " (500, 'sixes', %s, 'listing', %s, 'open', %s, %s, %s)",
             ((now + timedelta(days=1)).isoformat(timespec="seconds"), DEMO_TEAM_ID,
              steam_id, now.isoformat(timespec="seconds"),
              now.isoformat(timespec="seconds")))
         cur = db.execute(
             """INSERT INTO servers (scrim_id, owner_steam_id, team_id, state, name, map,
                                     max_slots, created_at, updated_at)
-               VALUES (500, ?, ?, 'running', 'Match server', 'cp_process_final', 24,
-                       ?, ?)""",
+               VALUES (500, %s, %s, 'running', 'Match server', 'cp_process_final', 24,
+                       %s, %s)
+               RETURNING id""",
             (steam_id, DEMO_TEAM_ID, now.isoformat(timespec="seconds"),
              now.isoformat(timespec="seconds")))
-        server_id = cur.lastrowid
+        server_id = cur.fetchone()["id"]
         db.commit()
 
     body = client.get(f"/servers/{server_id}").get_data(as_text=True)
@@ -173,11 +180,12 @@ def test_a_season_term_server_states_when_its_term_ends(client, login, link_team
         cur = get_db().execute(
             """INSERT INTO servers (owner_steam_id, team_id, state, name, map,
                                     max_slots, term_ends_at, created_at, updated_at)
-               VALUES (?, ?, 'running', 'Season home', 'cp_process_final', 24, ?, ?, ?)""",
+               VALUES (%s, %s, 'running', 'Season home', 'cp_process_final', 24, %s, %s, %s)
+               RETURNING id""",
             (steam_id, DEMO_TEAM_ID,
              (now + timedelta(days=30)).isoformat(timespec="seconds"),
              now.isoformat(timespec="seconds"), now.isoformat(timespec="seconds")))
-        server_id = cur.lastrowid
+        server_id = cur.fetchone()["id"]
         get_db().commit()
 
     body = client.get(f"/servers/{server_id}").get_data(as_text=True)

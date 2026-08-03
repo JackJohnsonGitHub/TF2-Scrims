@@ -74,6 +74,10 @@ def test_production_with_all_credentials_passes(monkeypatch):
         "OPERATOR_TRADE_URL",
         "https://steamcommunity.com/tradeoffer/new/?partner=1&token=x",
     )
+    # 006/FR-020: production also refuses to start without an explicit DATABASE_URL —
+    # the local-dev default would point at nothing, and the app would come up and fail
+    # every request instead of failing to come up.
+    monkeypatch.setenv("DATABASE_URL", "postgresql://tf2app@postgres/tf2hosting")
 
     cfg.validate()  # must not raise
 

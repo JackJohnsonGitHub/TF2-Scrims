@@ -263,7 +263,7 @@ def test_open_listings_filter_by_format(ctx):
 
 def backdate(scrim_id, when):
     from app.db import get_db
-    get_db().execute("UPDATE scrims SET scheduled_at = ? WHERE id = ?", (when, scrim_id))
+    get_db().execute("UPDATE scrims SET scheduled_at = %s WHERE id = %s", (when, scrim_id))
     get_db().commit()
 
 

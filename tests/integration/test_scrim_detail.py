@@ -62,7 +62,7 @@ def backdate(app, scrim_id, days=1):
     when = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat(timespec="seconds")
     with app.test_request_context():
         from app.db import get_db
-        get_db().execute("UPDATE scrims SET scheduled_at = ? WHERE id = ?", (when, scrim_id))
+        get_db().execute("UPDATE scrims SET scheduled_at = %s WHERE id = %s", (when, scrim_id))
         get_db().commit()
 
 
@@ -105,7 +105,7 @@ def test_outage_with_warm_cache_serves_cached_roster(app, client, three_users, m
         from app.db import get_db
         from app.rgl_store import save_roster
         save_roster(101, [RglRosterPlayer("1", "cachedplayer", False)])
-        get_db().execute("UPDATE rgl_roster_meta SET fetched_at = ?", (stale,))
+        get_db().execute("UPDATE rgl_roster_meta SET fetched_at = %s", (stale,))
         get_db().commit()
     mock_roster(outcome="unavailable")
 
@@ -280,7 +280,7 @@ def attendance_status(app, scrim_id, player):
     with app.test_request_context():
         from app.db import get_db
         row = get_db().execute(
-            "SELECT status FROM scrim_attendance WHERE scrim_id=? AND player_steam_id=?",
+            "SELECT status FROM scrim_attendance WHERE scrim_id=%s AND player_steam_id=%s",
             (scrim_id, player)).fetchone()
         return row["status"] if row else None
 

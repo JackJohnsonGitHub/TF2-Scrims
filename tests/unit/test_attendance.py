@@ -51,13 +51,13 @@ def listing(ctx):
 def get_row(scrim_id, player):
     from app.db import get_db
     return get_db().execute(
-        "SELECT * FROM scrim_attendance WHERE scrim_id = ? AND player_steam_id = ?",
+        "SELECT * FROM scrim_attendance WHERE scrim_id = %s AND player_steam_id = %s",
         (scrim_id, player)).fetchone()
 
 
 def backdate(scrim_id):
     from app.db import get_db
-    get_db().execute("UPDATE scrims SET scheduled_at = ? WHERE id = ?",
+    get_db().execute("UPDATE scrims SET scheduled_at = %s WHERE id = %s",
                      (past(), scrim_id))
     get_db().commit()
 
@@ -149,7 +149,7 @@ def test_upsert_updates_single_row(listing):
     set_status(A, listing, P3, "unconfirmed")
     from app.db import get_db
     rows = get_db().execute(
-        "SELECT * FROM scrim_attendance WHERE scrim_id = ?", (listing,)).fetchall()
+        "SELECT * FROM scrim_attendance WHERE scrim_id = %s", (listing,)).fetchall()
     assert len(rows) == 1 and rows[0]["status"] == "unconfirmed"
 
 

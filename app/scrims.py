@@ -7,7 +7,6 @@ Either participant may cancel a confirmed scrim → cancelled (kept, never delet
 Every transition re-checks team membership server-side (FR-016) and none of them
 touches servers or payment (FR-018). Times are ISO-8601 UTC throughout.
 """
-import sqlite3
 from datetime import datetime, timezone
 
 from .db import get_db
@@ -54,30 +53,32 @@ def _insert(format_: str, scheduled_at: str, origin: str, proposer_team_id: int,
         """INSERT INTO scrims (format, scheduled_at, origin, proposer_team_id,
                                opponent_team_id, status, created_by, created_at,
                                updated_at, notes)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+           RETURNING id""",
         (format_, scheduled_at, origin, proposer_team_id, opponent_team_id,
          status, created_by, now, now, notes),
     )
+    scrim_id = cur.fetchone()["id"]
     get_db().commit()
-    return cur.lastrowid
+    return scrim_id
 
 
 def _set_status(scrim_id: int, status: str, opponent_team_id: int | None = None) -> int:
     """Unconditional status write (guards already ran). Returns rows changed."""
     db = get_db()
     if opponent_team_id is None:
-        cur = db.execute("UPDATE scrims SET status = ?, updated_at = ? WHERE id = ?",
+        cur = db.execute("UPDATE scrims SET status = %s, updated_at = %s WHERE id = %s",
                          (status, utc_now(), scrim_id))
     else:
         cur = db.execute(
-            "UPDATE scrims SET status = ?, opponent_team_id = ?, updated_at = ? WHERE id = ?",
+            "UPDATE scrims SET status = %s, opponent_team_id = %s, updated_at = %s WHERE id = %s",
             (status, opponent_team_id, utc_now(), scrim_id))
     db.commit()
     return cur.rowcount
 
 
-def _get_or_404(scrim_id: int) -> sqlite3.Row:
-    row = get_db().execute("SELECT * FROM scrims WHERE id = ?", (scrim_id,)).fetchone()
+def _get_or_404(scrim_id: int) -> dict:
+    row = get_db().execute("SELECT * FROM scrims WHERE id = %s", (scrim_id,)).fetchone()
     if row is None:
         raise ScrimError("Scrim not found.", status=404)
     return row
@@ -178,8 +179,8 @@ def claim(actor: str, scrim_id: int, claiming_team_id: int) -> None:
     db = get_db()
     now = utc_now()
     cur = db.execute(
-        """UPDATE scrims SET status = 'confirmed', opponent_team_id = ?, updated_at = ?
-           WHERE id = ? AND status = 'open' AND scheduled_at > ?""",
+        """UPDATE scrims SET status = 'confirmed', opponent_team_id = %s, updated_at = %s
+           WHERE id = %s AND status = 'open' AND scheduled_at > %s""",
         (claiming_team_id, now, scrim_id, now))
     db.commit()
     if cur.rowcount == 0:
@@ -215,14 +216,14 @@ _SELECT = """
     LEFT JOIN rgl_teams ot ON ot.rgl_team_id = s.opponent_team_id
 """
 
-_MY_TEAMS = "(SELECT rgl_team_id FROM rgl_memberships WHERE steam_id = ?)"
+_MY_TEAMS = "(SELECT rgl_team_id FROM rgl_memberships WHERE steam_id = %s)"
 
 
-def get_scrim(scrim_id: int) -> sqlite3.Row | None:
-    return get_db().execute(_SELECT + " WHERE s.id = ?", (scrim_id,)).fetchone()
+def get_scrim(scrim_id: int) -> dict | None:
+    return get_db().execute(_SELECT + " WHERE s.id = %s", (scrim_id,)).fetchone()
 
 
-def get_scrim_for_viewer(scrim_id: int, steam_id: str) -> sqlite3.Row | None:
+def get_scrim_for_viewer(scrim_id: int, steam_id: str) -> dict | None:
     """Detail-page visibility (004 research §6): an open, *future* listing is
     visible to any RGL-linked user (that's what the dashboard exposes); anything
     else — claimed, cancelled, expired, or proposal-origin — only to members of a
@@ -240,41 +241,41 @@ def get_scrim_for_viewer(scrim_id: int, steam_id: str) -> sqlite3.Row | None:
     return None
 
 
-def incoming_pending(steam_id: str) -> list[sqlite3.Row]:
+def incoming_pending(steam_id: str) -> list[dict]:
     return get_db().execute(
         _SELECT + f" WHERE s.status = 'pending' AND s.opponent_team_id IN {_MY_TEAMS}"
         " ORDER BY s.scheduled_at", (steam_id,)).fetchall()
 
 
-def outgoing_pending(steam_id: str) -> list[sqlite3.Row]:
+def outgoing_pending(steam_id: str) -> list[dict]:
     return get_db().execute(
         _SELECT + f" WHERE s.status = 'pending' AND s.proposer_team_id IN {_MY_TEAMS}"
         " ORDER BY s.scheduled_at", (steam_id,)).fetchall()
 
 
-def upcoming_confirmed(steam_id: str) -> list[sqlite3.Row]:
+def upcoming_confirmed(steam_id: str) -> list[dict]:
     return get_db().execute(
         _SELECT + f""" WHERE s.status = 'confirmed'
             AND (s.proposer_team_id IN {_MY_TEAMS} OR s.opponent_team_id IN {_MY_TEAMS})
-            AND s.scheduled_at >= ?
+            AND s.scheduled_at >= %s
             ORDER BY s.scheduled_at""",
         (steam_id, steam_id, utc_now())).fetchall()
 
 
-def my_open_listings(steam_id: str) -> list[sqlite3.Row]:
+def my_open_listings(steam_id: str) -> list[dict]:
     """The user's own open listings, excluding expired ones (004 FR-003)."""
     return get_db().execute(
         _SELECT + f" WHERE s.status = 'open' AND s.proposer_team_id IN {_MY_TEAMS}"
-        " AND s.scheduled_at > ? ORDER BY s.scheduled_at",
+        " AND s.scheduled_at > %s ORDER BY s.scheduled_at",
         (steam_id, utc_now())).fetchall()
 
 
-def open_listings(format_: str | None = None) -> list[sqlite3.Row]:
+def open_listings(format_: str | None = None) -> list[dict]:
     """Open future listings (all teams). Expiry is read-side: rows whose
     scheduled_at has passed simply stop matching (004 FR-003 / SC-002)."""
-    query = _SELECT + " WHERE s.status = 'open' AND s.scheduled_at > ?"
+    query = _SELECT + " WHERE s.status = 'open' AND s.scheduled_at > %s"
     params: tuple = (utc_now(),)
     if format_:
-        query += " AND s.format = ?"
+        query += " AND s.format = %s"
         params += (format_,)
     return get_db().execute(query + " ORDER BY s.scheduled_at", params).fetchall()

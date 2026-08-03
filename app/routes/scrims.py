@@ -83,7 +83,7 @@ def _attach_server(scrim_id: int) -> None:
     row = get_scrim(scrim_id)
     if row is None:
         return
-    scrim = dict(row)   # sqlite3.Row has no .get()
+    scrim = row
     try:
         srv.attach_to_scrim(_steam_id(), scrim)
         flash("A server will be ready when the scrim starts. 1 credit reserved.",
@@ -241,7 +241,7 @@ def _draft() -> dict:
 def _pick_rows(rows, my_ids, on_platform=None) -> list[dict]:
     """Normalize candidate teams for the picker. `on_platform` is forced for the
     shortlist, whose query has no such column because every row in it is on the
-    platform by construction; sqlite3.Row would otherwise silently render as
+    platform by construction, and a missing column must not render as
     off-platform in Jinja."""
     out = []
     for row in rows:

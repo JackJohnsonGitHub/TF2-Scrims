@@ -6,7 +6,6 @@ listing-origin scrims only, posting-team members only, self-or-creator writes
 by the player's SteamID64 — the same identity space RGL rosters and app accounts
 share — with a name snapshot so departed players stay renderable (data-model.md).
 """
-import sqlite3
 
 from .db import get_db
 from .rgl_store import get_roster, is_member, utc_now
@@ -23,7 +22,7 @@ def required_players(format_: str) -> int:
     return FORMAT_SIZES.get(format_, 0)
 
 
-def is_locked(scrim: sqlite3.Row) -> bool:
+def is_locked(scrim: dict) -> bool:
     """Read-only once the scheduled time has passed or the scrim is dead."""
     return (scrim["scheduled_at"] <= utc_now()
             or scrim["status"] in ("cancelled", "declined"))
@@ -56,7 +55,7 @@ def set_status(actor: str, scrim_id: int, player_steam_id: str, status: str,
     db.execute(
         """INSERT INTO scrim_attendance (scrim_id, player_steam_id, player_name,
                                          status, marked_by, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?)
+           VALUES (%s, %s, %s, %s, %s, %s)
            ON CONFLICT(scrim_id, player_steam_id) DO UPDATE SET
                status = excluded.status, marked_by = excluded.marked_by,
                updated_at = excluded.updated_at""",
@@ -65,7 +64,7 @@ def set_status(actor: str, scrim_id: int, player_steam_id: str, status: str,
     db.commit()
 
 
-def _resolve_name(scrim: sqlite3.Row, player_steam_id: str) -> str:
+def _resolve_name(scrim: dict, player_steam_id: str) -> str:
     """Snapshot name: current roster first, then a prior attendance row (departed
     player being re-marked), else the raw id."""
     for p in get_roster(scrim["proposer_team_id"]):
@@ -73,18 +72,18 @@ def _resolve_name(scrim: sqlite3.Row, player_steam_id: str) -> str:
             return p["name"]
     row = get_db().execute(
         """SELECT player_name FROM scrim_attendance
-           WHERE scrim_id = ? AND player_steam_id = ?""",
+           WHERE scrim_id = %s AND player_steam_id = %s""",
         (scrim["id"], player_steam_id)).fetchone()
     return row["player_name"] if row else player_steam_id
 
 
-def roster_with_attendance(scrim: sqlite3.Row) -> list[dict]:
+def roster_with_attendance(scrim: dict) -> list[dict]:
     """The posting team's current roster merged with attendance marks, plus rows
     for marked players who have since left the team (flagged `departed`)."""
     marks = {
         r["player_steam_id"]: r
         for r in get_db().execute(
-            "SELECT * FROM scrim_attendance WHERE scrim_id = ?", (scrim["id"],))
+            "SELECT * FROM scrim_attendance WHERE scrim_id = %s", (scrim["id"],))
     }
     entries = []
     for p in get_roster(scrim["proposer_team_id"]):

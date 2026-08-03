@@ -48,18 +48,20 @@ def a_scrim(app, steam_id, days=2, status="confirmed"):
     with app.test_request_context():
         db = get_db()
         db.execute(
-            "INSERT OR IGNORE INTO rgl_teams (rgl_team_id, name, format, updated_at)"
-            " VALUES (?, 'Bravo', 'sixes', ?)", (TEAM_B, now.isoformat(timespec="seconds")))
+            "INSERT INTO rgl_teams (rgl_team_id, name, format, updated_at)"
+            " VALUES (%s, 'Bravo', 'sixes', %s) ON CONFLICT DO NOTHING", (TEAM_B, now.isoformat(timespec="seconds")))
         cur = db.execute(
             """INSERT INTO scrims (format, scheduled_at, origin, proposer_team_id,
                                    opponent_team_id, status, created_by,
                                    created_at, updated_at)
-               VALUES ('sixes', ?, 'proposal', ?, ?, ?, ?, ?, ?)""",
+               VALUES ('sixes', %s, 'proposal', %s, %s, %s, %s, %s, %s)
+               RETURNING id""",
             ((now + timedelta(days=days)).isoformat(timespec="seconds"), TEAM_A, TEAM_B,
              status, steam_id, now.isoformat(timespec="seconds"),
              now.isoformat(timespec="seconds")))
+        scrim_id = cur.fetchone()["id"]
         db.commit()
-        return cur.lastrowid
+        return scrim_id
 
 
 def a_running_server(app, steam_id, minutes_left=10):
@@ -203,7 +205,7 @@ def test_a_past_scrim_is_not_listed_as_needing_a_server(client, app, captain):
     scrim_id = a_scrim(app, captain)
     with app.test_request_context():
         past = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat(timespec="seconds")
-        get_db().execute("UPDATE scrims SET scheduled_at = ? WHERE id = ?", (past, scrim_id))
+        get_db().execute("UPDATE scrims SET scheduled_at = %s WHERE id = %s", (past, scrim_id))
         get_db().commit()
 
     assert "Scrims with no server" not in client.get("/servers").get_data(as_text=True)
@@ -214,7 +216,7 @@ def test_a_cancelled_scrim_is_not_listed_as_needing_a_server(client, app, captai
     give_credits(app, captain, 2)
     scrim_id = a_scrim(app, captain)
     with app.test_request_context():
-        get_db().execute("UPDATE scrims SET status = 'cancelled' WHERE id = ?", (scrim_id,))
+        get_db().execute("UPDATE scrims SET status = 'cancelled' WHERE id = %s", (scrim_id,))
         get_db().commit()
 
     assert "Scrims with no server" not in client.get("/servers").get_data(as_text=True)

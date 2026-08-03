@@ -1,14 +1,92 @@
-"""Shared test fixtures: an app on a throwaway SQLite DB, a client, and a login helper."""
+"""Shared test fixtures: an app on a real PostgreSQL, a client, and a login helper.
+
+**The suite runs against a real store.** One engine everywhere — development, tests, and
+deployment (FR-025) — so there is no in-memory substitute and no second dialect. The cost
+is that running the tests requires a running Postgres; the benefit is that a test which
+passes here exercises the same integrity guarantees the deployed platform relies on, which
+is the whole point of FR-026.
+
+Isolation is per-test `TRUNCATE … RESTART IDENTITY CASCADE` rather than a throwaway file
+(FR-027). `RESTART IDENTITY` matters: it resets the sequences, so tests asserting on
+specific ids behave exactly as they did with a fresh SQLite file.
+"""
 import pytest
 
-from app import create_app
-from app.config import Config
+
+def pytest_sessionstart(session):
+    """Fail the run once, actionably, when no store is reachable (FR-024).
+
+    Without this, 408 tests each fail with a connection error and the run reads like the
+    code is broken rather than like the developer has not started a container. FR-024 is
+    explicit that this must not be the experience.
+    """
+    from app import db
+
+    try:
+        db.check()
+    except Exception as exc:  # noqa: BLE001 — any failure to reach the store is fatal here
+        pytest.exit(
+            "\n\n"
+            "Cannot reach the metadata store, so the test suite cannot run.\n"
+            "The suite runs against a real PostgreSQL — one engine everywhere (FR-025).\n\n"
+            f"  store:  {db.redact_dsn()}\n"
+            f"  error:  {type(exc).__name__}: {exc}\n\n"
+            "Start one and re-run:\n\n"
+            "  docker run -d --name tf2-pg -p 5432:5432 \\\n"
+            "    -e POSTGRES_PASSWORD=dev -e POSTGRES_USER=tf2app "
+            "-e POSTGRES_DB=tf2hosting \\\n"
+            "    postgres:17-alpine\n\n"
+            '  export DATABASE_URL="postgresql://tf2app:dev@localhost:5432/tf2hosting"\n\n'
+            "If the container already exists but is stopped:  docker start tf2-pg\n",
+            returncode=1,
+        )
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _store():
+    """Bring the store to the current schema once for the whole session."""
+    import psycopg
+
+    from app import db
+
+    db.migrate()
+
+    # Discovered rather than hardcoded: a table added by a later migration must be
+    # truncated too, and a list in this file would silently not be updated — leaving one
+    # table leaking state between tests, which is the exact failure FR-027 forbids.
+    with psycopg.connect(db.dsn()) as conn:
+        names = [
+            row[0]
+            for row in conn.execute(
+                "SELECT tablename FROM pg_tables"
+                " WHERE schemaname = 'public' AND tablename <> 'schema_migrations'"
+                " ORDER BY tablename"
+            ).fetchall()
+        ]
+    truncate_sql = (
+        f"TRUNCATE {', '.join(names)} RESTART IDENTITY CASCADE" if names else None
+    )
+
+    with psycopg.connect(db.dsn(), autocommit=True) as conn:
+        yield truncate_sql, conn
+
+    db.close_pool()
+
+
+@pytest.fixture(autouse=True)
+def _clean_store(_store):
+    """Empty every table before each test, and reset every identity sequence."""
+    truncate_sql, conn = _store
+    if truncate_sql:
+        conn.execute(truncate_sql)
 
 
 @pytest.fixture
-def app(tmp_path):
+def app():
+    from app import create_app
+    from app.config import Config
+
     class TestConfig(Config):
-        DB_PATH = str(tmp_path / "test.db")
         SECRET_KEY = "test-secret"
         STEAM_API_KEY = ""
         BASE_URL = "http://localhost:5000"
@@ -44,24 +122,27 @@ def demo_servers(app):
         with app.test_request_context():
             db = get_db()
             db.execute(
-                "INSERT OR IGNORE INTO users (steam_id, persona_name, created_at,"
-                " last_login_at) VALUES (?, 'Demo Rival', ?, ?)", (owner, now, now))
+                "INSERT INTO users (steam_id, persona_name, created_at,"
+                " last_login_at) VALUES (%s, 'Demo Rival', %s, %s)"
+                " ON CONFLICT DO NOTHING", (owner, now, now))
             db.execute(
-                "INSERT OR IGNORE INTO rgl_teams (rgl_team_id, name, format, updated_at)"
-                " VALUES (?, 'Demo Rival', 'sixes', ?)", (team_id, now))
+                "INSERT INTO rgl_teams (rgl_team_id, name, format, updated_at)"
+                " VALUES (%s, 'Demo Rival', 'sixes', %s)"
+                " ON CONFLICT DO NOTHING", (team_id, now))
             for name, map_name, slots, state, address, players, reason in (
                 (running_name, "cp_process_final", 24, "running", "10.0.0.5:27015", 12, None),
                 (stopped_name, "jump_academy_b4", 8, "stopped", None, None, "time_expired"),
             ):
-                cur = db.execute(
+                row = db.execute(
                     """INSERT INTO servers (owner_steam_id, team_id, state, name, map,
                                             max_slots, address, players, demo,
                                             stopped_reason, created_at, updated_at)
-                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                       RETURNING id""",
                     (owner, team_id, state, name, map_name, slots, address, players,
                      int(demo), reason, now, now),
-                )
-                ids.append(cur.lastrowid)
+                ).fetchone()
+                ids.append(row["id"])
             db.commit()
         return ids
 

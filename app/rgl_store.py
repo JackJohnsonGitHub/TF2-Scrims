@@ -7,7 +7,6 @@ the user's memberships but keeps the shared `rgl_teams` rows (other members and
 existing scrims still reference them).
 """
 import json
-import sqlite3
 from datetime import datetime, timedelta, timezone
 
 from flask import current_app
@@ -37,7 +36,7 @@ def save_link(steam_id: str, profile: RglProfile) -> str:
     db.execute(
         """INSERT INTO rgl_links (steam_id, profile_name, state, is_verified, is_banned,
                                   is_on_probation, linked_at, last_refreshed_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+           VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
            ON CONFLICT(steam_id) DO UPDATE SET
                profile_name=excluded.profile_name, state=excluded.state,
                is_verified=excluded.is_verified, is_banned=excluded.is_banned,
@@ -50,7 +49,7 @@ def save_link(steam_id: str, profile: RglProfile) -> str:
         db.execute(
             """INSERT INTO rgl_teams (rgl_team_id, name, tag, format, division_name,
                                       season_id, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?)
+               VALUES (%s, %s, %s, %s, %s, %s, %s)
                ON CONFLICT(rgl_team_id) DO UPDATE SET
                    name=excluded.name, tag=excluded.tag, format=excluded.format,
                    division_name=excluded.division_name, season_id=excluded.season_id,
@@ -59,39 +58,39 @@ def save_link(steam_id: str, profile: RglProfile) -> str:
              team.division_name, team.season_id, now),
         )
     # Rebuild memberships: drops teams the user left since the last refresh.
-    db.execute("DELETE FROM rgl_memberships WHERE steam_id = ?", (steam_id,))
+    db.execute("DELETE FROM rgl_memberships WHERE steam_id = %s", (steam_id,))
     for team in profile.teams:
         db.execute(
-            "INSERT INTO rgl_memberships (steam_id, rgl_team_id) VALUES (?, ?)",
+            "INSERT INTO rgl_memberships (steam_id, rgl_team_id) VALUES (%s, %s)",
             (steam_id, team.rgl_team_id),
         )
     db.commit()
     return state
 
 
-def get_link(steam_id: str) -> sqlite3.Row | None:
+def get_link(steam_id: str) -> dict | None:
     return get_db().execute(
-        "SELECT * FROM rgl_links WHERE steam_id = ?", (steam_id,)
+        "SELECT * FROM rgl_links WHERE steam_id = %s", (steam_id,)
     ).fetchone()
 
 
-def get_user_teams(steam_id: str) -> list[sqlite3.Row]:
+def get_user_teams(steam_id: str) -> list[dict]:
     """Teams the user is currently on (their acting authority), ordered by format."""
     return get_db().execute(
         """SELECT t.* FROM rgl_teams t
            JOIN rgl_memberships m ON m.rgl_team_id = t.rgl_team_id
-           WHERE m.steam_id = ? ORDER BY t.format, t.name""",
+           WHERE m.steam_id = %s ORDER BY t.format, t.name""",
         (steam_id,),
     ).fetchall()
 
 
-def get_team(rgl_team_id: int) -> sqlite3.Row | None:
+def get_team(rgl_team_id: int) -> dict | None:
     return get_db().execute(
-        "SELECT * FROM rgl_teams WHERE rgl_team_id = ?", (rgl_team_id,)
+        "SELECT * FROM rgl_teams WHERE rgl_team_id = %s", (rgl_team_id,)
     ).fetchone()
 
 
-def all_teams() -> list[sqlite3.Row]:
+def all_teams() -> list[dict]:
     """Every team known to the platform (potential opponents), ordered by format."""
     return get_db().execute(
         "SELECT * FROM rgl_teams ORDER BY format, name"
@@ -102,7 +101,7 @@ def is_member(steam_id: str, rgl_team_id: int) -> bool:
     """The authority check (FR-016): a user may act for a team iff a membership
     row exists."""
     row = get_db().execute(
-        "SELECT 1 FROM rgl_memberships WHERE steam_id = ? AND rgl_team_id = ?",
+        "SELECT 1 FROM rgl_memberships WHERE steam_id = %s AND rgl_team_id = %s",
         (steam_id, rgl_team_id),
     ).fetchone()
     return row is not None
@@ -110,8 +109,8 @@ def is_member(steam_id: str, rgl_team_id: int) -> bool:
 
 def unlink(steam_id: str) -> None:
     db = get_db()
-    db.execute("DELETE FROM rgl_memberships WHERE steam_id = ?", (steam_id,))
-    db.execute("DELETE FROM rgl_links WHERE steam_id = ?", (steam_id,))
+    db.execute("DELETE FROM rgl_memberships WHERE steam_id = %s", (steam_id,))
+    db.execute("DELETE FROM rgl_links WHERE steam_id = %s", (steam_id,))
     db.commit()
 
 
@@ -124,38 +123,38 @@ def save_roster(rgl_team_id: int, players: list[RglRosterPlayer]) -> None:
     """Atomically replace a team's cached roster and stamp the successful fetch."""
     db = get_db()
     now = utc_now()
-    db.execute("DELETE FROM rgl_rosters WHERE rgl_team_id = ?", (rgl_team_id,))
+    db.execute("DELETE FROM rgl_rosters WHERE rgl_team_id = %s", (rgl_team_id,))
     for p in players:
         db.execute(
             """INSERT INTO rgl_rosters (rgl_team_id, steam_id, name, is_leader)
-               VALUES (?, ?, ?, ?)""",
+               VALUES (%s, %s, %s, %s)""",
             (rgl_team_id, p.steam_id, p.name, int(p.is_leader)),
         )
     db.execute(
-        """INSERT INTO rgl_roster_meta (rgl_team_id, fetched_at) VALUES (?, ?)
+        """INSERT INTO rgl_roster_meta (rgl_team_id, fetched_at) VALUES (%s, %s)
            ON CONFLICT(rgl_team_id) DO UPDATE SET fetched_at = excluded.fetched_at""",
         (rgl_team_id, now),
     )
     db.commit()
 
 
-def get_roster(rgl_team_id: int) -> list[sqlite3.Row]:
+def get_roster(rgl_team_id: int) -> list[dict]:
     return get_db().execute(
-        """SELECT * FROM rgl_rosters WHERE rgl_team_id = ?
-           ORDER BY is_leader DESC, name COLLATE NOCASE""",
+        """SELECT * FROM rgl_rosters WHERE rgl_team_id = %s
+           ORDER BY is_leader DESC, lower(name)""",
         (rgl_team_id,),
     ).fetchall()
 
 
 def roster_fetched_at(rgl_team_id: int) -> str | None:
     row = get_db().execute(
-        "SELECT fetched_at FROM rgl_roster_meta WHERE rgl_team_id = ?",
+        "SELECT fetched_at FROM rgl_roster_meta WHERE rgl_team_id = %s",
         (rgl_team_id,),
     ).fetchone()
     return row["fetched_at"] if row else None
 
 
-def ensure_roster(rgl_team_id: int) -> tuple[list[sqlite3.Row], str | None]:
+def ensure_roster(rgl_team_id: int) -> tuple[list[dict], str | None]:
     """Return (cached roster, fetched_at), refreshing from RGL when the stamp is
     missing or older than the TTL. Empty rows with a None stamp means the roster
     is unknown (never fetched successfully) — render the friendly notice."""
@@ -174,13 +173,13 @@ def ensure_roster(rgl_team_id: int) -> tuple[list[sqlite3.Row], str | None]:
 # RGL's season endpoint yields only team ids + a division sort map; names come from
 # per-team fetches, so the directory hydrates in bounded batches (research §8).
 
-def get_season(season_id: int) -> sqlite3.Row | None:
+def get_season(season_id: int) -> dict | None:
     return get_db().execute(
-        "SELECT * FROM rgl_seasons WHERE season_id = ?", (season_id,)
+        "SELECT * FROM rgl_seasons WHERE season_id = %s", (season_id,)
     ).fetchone()
 
 
-def ensure_season(season_id: int) -> sqlite3.Row | None:
+def ensure_season(season_id: int) -> dict | None:
     """Fetch/refresh the season header + participation list within the directory
     TTL. A failed refresh keeps the cached season (stale-if-error); None means
     nothing cached and RGL unreachable — render the friendly notice."""
@@ -198,7 +197,7 @@ def ensure_season(season_id: int) -> sqlite3.Row | None:
     db = get_db()
     db.execute(
         """INSERT INTO rgl_seasons (season_id, name, format, division_sorting, fetched_at)
-           VALUES (?, ?, ?, ?, ?)
+           VALUES (%s, %s, %s, %s, %s)
            ON CONFLICT(season_id) DO UPDATE SET name = excluded.name,
                format = excluded.format, division_sorting = excluded.division_sorting,
                fetched_at = excluded.fetched_at""",
@@ -207,7 +206,8 @@ def ensure_season(season_id: int) -> sqlite3.Row | None:
     )
     for team_id in season.team_ids:
         db.execute(
-            "INSERT OR IGNORE INTO rgl_season_teams (season_id, rgl_team_id) VALUES (?, ?)",
+            "INSERT INTO rgl_season_teams (season_id, rgl_team_id) VALUES (%s, %s)"
+            " ON CONFLICT DO NOTHING",
             (season_id, team_id),
         )
     db.commit()
@@ -217,7 +217,7 @@ def ensure_season(season_id: int) -> sqlite3.Row | None:
 def season_progress(season_id: int) -> tuple[int, int]:
     row = get_db().execute(
         """SELECT COUNT(hydrated_at) AS done, COUNT(*) AS total
-           FROM rgl_season_teams WHERE season_id = ?""",
+           FROM rgl_season_teams WHERE season_id = %s""",
         (season_id,),
     ).fetchone()
     return row["done"], row["total"]
@@ -234,8 +234,8 @@ def hydrate_season_teams(season_id: int, batch: int) -> int:
         return 0
     pending = get_db().execute(
         """SELECT rgl_team_id FROM rgl_season_teams
-           WHERE season_id = ? AND hydrated_at IS NULL
-           ORDER BY rgl_team_id LIMIT ?""",
+           WHERE season_id = %s AND hydrated_at IS NULL
+           ORDER BY rgl_team_id LIMIT %s""",
         (season_id, batch),
     ).fetchall()
 
@@ -251,7 +251,7 @@ def hydrate_season_teams(season_id: int, batch: int) -> int:
             db.execute(
                 """INSERT INTO rgl_teams (rgl_team_id, name, tag, format, division_name,
                                           season_id, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s)
                    ON CONFLICT(rgl_team_id) DO UPDATE SET name = excluded.name,
                        tag = excluded.tag, format = excluded.format,
                        division_name = excluded.division_name,
@@ -263,8 +263,8 @@ def hydrate_season_teams(season_id: int, batch: int) -> int:
         # ok and no_team both stamp the row; no_team keeps division_id NULL so the
         # browser skips it.
         db.execute(
-            """UPDATE rgl_season_teams SET division_id = ?, hydrated_at = ?
-               WHERE season_id = ? AND rgl_team_id = ?""",
+            """UPDATE rgl_season_teams SET division_id = %s, hydrated_at = %s
+               WHERE season_id = %s AND rgl_team_id = %s""",
             (summary.division_id if summary.outcome == "ok" else None, now,
              season_id, team_id),
         )
@@ -273,7 +273,7 @@ def hydrate_season_teams(season_id: int, batch: int) -> int:
 
 
 def division_browser(season_id: int, division_id: int | None = None
-                     ) -> tuple[list[dict], list[sqlite3.Row]]:
+                     ) -> tuple[list[dict], list[dict]]:
     """Hydrated divisions (ordered by the season's divisionSorting rank) and, when
     a division is chosen, its teams with on-platform flags."""
     season = get_season(season_id)
@@ -284,29 +284,29 @@ def division_browser(season_id: int, division_id: int | None = None
             """SELECT st.division_id, t.division_name, COUNT(*) AS team_count
                FROM rgl_season_teams st
                JOIN rgl_teams t ON t.rgl_team_id = st.rgl_team_id
-               WHERE st.season_id = ? AND st.division_id IS NOT NULL
+               WHERE st.season_id = %s AND st.division_id IS NOT NULL
                GROUP BY st.division_id, t.division_name""",
             (season_id,),
         )
     ]
     divisions.sort(key=lambda d: (sorting.get(str(d["division_id"]), 1_000_000),
                                   d["division_name"] or ""))
-    teams: list[sqlite3.Row] = []
+    teams: list[dict] = []
     if division_id is not None:
         teams = get_db().execute(
             """SELECT t.*, EXISTS(SELECT 1 FROM rgl_memberships m
                                   WHERE m.rgl_team_id = t.rgl_team_id) AS on_platform
                FROM rgl_season_teams st
                JOIN rgl_teams t ON t.rgl_team_id = st.rgl_team_id
-               WHERE st.season_id = ? AND st.division_id = ?
-               ORDER BY t.name COLLATE NOCASE""",
+               WHERE st.season_id = %s AND st.division_id = %s
+               ORDER BY lower(t.name)""",
             (season_id, division_id),
         ).fetchall()
     return divisions, teams
 
 
 def search_teams(format_: str, query: str, season_id: int | None,
-                 limit: int) -> list[sqlite3.Row]:
+                 limit: int) -> list[dict]:
     """Name/tag search over the teams the propose picker can reach: everything
     hydrated for the proposing team's season, plus every on-platform team of that
     format (a team can be on the platform before its season is hydrated).
@@ -321,13 +321,13 @@ def search_teams(format_: str, query: str, season_id: int | None,
         """SELECT t.*, EXISTS(SELECT 1 FROM rgl_memberships m
                               WHERE m.rgl_team_id = t.rgl_team_id) AS on_platform
            FROM rgl_teams t
-           WHERE t.format = ?
-             AND (t.season_id = ?
+           WHERE t.format = %s
+             AND (t.season_id = %s
                   OR EXISTS(SELECT 1 FROM rgl_memberships m
                             WHERE m.rgl_team_id = t.rgl_team_id))
-             AND (t.name LIKE ? OR IFNULL(t.tag, '') LIKE ?)
-           ORDER BY on_platform DESC, t.name COLLATE NOCASE
-           LIMIT ?""",
+             AND (t.name ILIKE %s OR COALESCE(t.tag, '') ILIKE %s)
+           ORDER BY on_platform DESC, lower(t.name)
+           LIMIT %s""",
         (format_, season_id, like, like, limit),
     ).fetchall()
 
@@ -335,19 +335,19 @@ def search_teams(format_: str, query: str, season_id: int | None,
 def team_on_platform(rgl_team_id: int) -> bool:
     """True when at least one member of the team has an account here (FR-019/020)."""
     row = get_db().execute(
-        "SELECT 1 FROM rgl_memberships WHERE rgl_team_id = ? LIMIT 1",
+        "SELECT 1 FROM rgl_memberships WHERE rgl_team_id = %s LIMIT 1",
         (rgl_team_id,),
     ).fetchone()
     return row is not None
 
 
-def platform_teams(format_: str | None = None) -> list[sqlite3.Row]:
+def platform_teams(format_: str | None = None) -> list[dict]:
     """Teams with at least one member on the platform — the propose form's quick
     pick. The division browser is the path to everything else (research §9)."""
     query = """SELECT DISTINCT t.* FROM rgl_teams t
                JOIN rgl_memberships m ON m.rgl_team_id = t.rgl_team_id"""
     params: tuple = ()
     if format_:
-        query += " WHERE t.format = ?"
+        query += " WHERE t.format = %s"
         params = (format_,)
     return get_db().execute(query + " ORDER BY t.format, t.name", params).fetchall()

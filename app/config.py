@@ -29,9 +29,27 @@ class Config:
     # browser back here, so it must match the deployed origin.
     BASE_URL = os.environ.get("APP_BASE_URL", "http://localhost:5000").rstrip("/")
 
-    # SQLite database path (user accounts). Local file in dev; a PVC-backed path in
-    # the container.
-    DB_PATH = os.environ.get("DB_PATH", "app.db")
+    # The metadata store (feature 006). A libpq connection string, which contains a
+    # password and is therefore a secret by constitution IV: from OpenBao in real deploys,
+    # never committed, never logged, never rendered into a page. `app/db.py` redacts it to
+    # host:port/dbname anywhere it has to be reported.
+    #
+    # One engine everywhere — development, tests, and deployment (FR-025) — so the local
+    # default points at the container the README tells you to start, rather than at
+    # anything that would let the suite quietly run against a different engine.
+    DATABASE_URL = os.environ.get(
+        "DATABASE_URL", "postgresql://tf2app:dev@localhost:5432/tf2hosting"
+    )
+
+    # Connection pool, per process. Gunicorn runs 2 sync workers and a sync worker handles
+    # one request at a time, so 4 is headroom rather than tuning. Budget: 2 pods × 2
+    # workers × 4, plus CronJob peaks ≈ 20 against Postgres's default max_connections=100.
+    DB_POOL_MIN = int(os.environ.get("DB_POOL_MIN", "1"))
+    DB_POOL_MAX = int(os.environ.get("DB_POOL_MAX", "4"))
+
+    # How long to wait for a connection before failing. Bounded deliberately: an
+    # unreachable store must surface as a failed readiness check (FR-016), not a hang.
+    DB_CONNECT_TIMEOUT = float(os.environ.get("DB_CONNECT_TIMEOUT", "5"))
 
     # RGL public API (profile + current teams, keyed by SteamID64). Public and
     # keyless; called only on link/refresh, never per page load. The short timeout
@@ -39,7 +57,7 @@ class Config:
     RGL_API_BASE = os.environ.get("RGL_API_BASE", "https://api.rgl.gg/v0").rstrip("/")
     RGL_TIMEOUT_SECONDS = float(os.environ.get("RGL_TIMEOUT_SECONDS", "5"))
 
-    # Team rosters are cached in SQLite and refetched from RGL at most this often
+    # Team rosters are cached in the store and refetched from RGL at most this often
     # (on listing-detail views only — never on the dashboard path).
     RGL_ROSTER_TTL_SECONDS = float(os.environ.get("RGL_ROSTER_TTL_SECONDS", "3600"))
 
@@ -106,3 +124,12 @@ class Config:
                     "complete without them, and the failure would be silent. "
                     "Source them from OpenBao."
                 )
+        # DATABASE_URL has a local-dev default so a developer can start without ceremony.
+        # In production that default would point at nothing, and the app would come up and
+        # fail every request instead of failing to come up — so require it explicitly
+        # (FR-020, and the same fail-fast treatment as every other secret above).
+        if Config.ENV == "production" and not os.environ.get("DATABASE_URL"):
+            raise RuntimeError(
+                "DATABASE_URL is required in production (source it from OpenBao). "
+                "Without it the app would start against a store that does not exist."
+            )

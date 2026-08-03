@@ -154,7 +154,7 @@ def test_no_scheduling_action_provisions_servers(app, client, link_team):
 
     def server_count():
         with app.test_request_context():
-            return get_db().execute("SELECT COUNT(*) FROM servers").fetchone()[0]
+            return get_db().execute("SELECT COUNT(*) AS c FROM servers").fetchone()["c"]
 
     baseline = server_count()
     setup_two_sixes_teams(link_team)

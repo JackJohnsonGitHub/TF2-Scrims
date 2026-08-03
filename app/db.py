@@ -1,237 +1,268 @@
-"""SQLite connection + schema for the metadata store.
+"""PostgreSQL connection, transactions, and schema migration for the metadata store.
 
-First persisted entity is the user account (see specs/002-steam-sign-in/data-model.md).
-A thin stdlib-`sqlite3` seam keeps this minimal now while leaving room to move to
-Postgres/an ORM later.
+**This module is the only place in the repository permitted to open a connection to the
+store** (FR-023). The web app, the payment poller, the server reconciler, the seed script,
+and the test suite all reach Postgres through here — which is what stops connection
+settings, credentials, and integrity guarantees from drifting between the request path and
+the background jobs.
+
+Feature 006 replaced SQLite. The shape of `get_db()` / `close_db()` is deliberately
+unchanged, because psycopg 3's `Connection.execute()` returns a cursor exactly as
+`sqlite3`'s did — so 167 call sites moved by rewriting placeholders, not by restructuring
+(research R1). What is genuinely new is below `get_db()`: a pool, a transaction context
+manager, and an advisory-locked migration runner.
 """
-import sqlite3
+from __future__ import annotations
 
-from flask import current_app, g
+import logging
+import os
+import pathlib
+from contextlib import contextmanager
+from typing import Iterator
 
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS users (
-    steam_id       TEXT PRIMARY KEY,
-    persona_name   TEXT,
-    avatar_url     TEXT,
-    created_at     TEXT NOT NULL,
-    last_login_at  TEXT NOT NULL
-);
+import psycopg
+from flask import current_app, g, has_app_context
+from psycopg.conninfo import conninfo_to_dict
+from psycopg.rows import dict_row
+from psycopg_pool import ConnectionPool
 
-CREATE TABLE IF NOT EXISTS rgl_links (
-    steam_id           TEXT PRIMARY KEY REFERENCES users(steam_id),
-    profile_name       TEXT,
-    state              TEXT NOT NULL,
-    is_verified        INTEGER NOT NULL DEFAULT 0,
-    is_banned          INTEGER NOT NULL DEFAULT 0,
-    is_on_probation    INTEGER NOT NULL DEFAULT 0,
-    linked_at          TEXT NOT NULL,
-    last_refreshed_at  TEXT NOT NULL
-);
+from .config import Config
 
-CREATE TABLE IF NOT EXISTS rgl_teams (
-    rgl_team_id    INTEGER PRIMARY KEY,
-    name           TEXT NOT NULL,
-    tag            TEXT,
-    format         TEXT NOT NULL,
-    division_name  TEXT,
-    season_id      INTEGER,
-    updated_at     TEXT NOT NULL
-);
+log = logging.getLogger(__name__)
 
-CREATE TABLE IF NOT EXISTS rgl_memberships (
-    steam_id     TEXT NOT NULL REFERENCES users(steam_id),
-    rgl_team_id  INTEGER NOT NULL REFERENCES rgl_teams(rgl_team_id),
-    PRIMARY KEY (steam_id, rgl_team_id)
-);
+MIGRATIONS_DIR = pathlib.Path(__file__).resolve().parent.parent / "migrations"
 
-CREATE TABLE IF NOT EXISTS scrims (
-    id                INTEGER PRIMARY KEY AUTOINCREMENT,
-    format            TEXT NOT NULL,
-    scheduled_at      TEXT NOT NULL,
-    origin            TEXT NOT NULL,
-    proposer_team_id  INTEGER NOT NULL REFERENCES rgl_teams(rgl_team_id),
-    opponent_team_id  INTEGER REFERENCES rgl_teams(rgl_team_id),
-    status            TEXT NOT NULL,
-    created_by        TEXT NOT NULL REFERENCES users(steam_id),
-    created_at        TEXT NOT NULL,
-    updated_at        TEXT NOT NULL,
-    notes             TEXT
-);
+# A fixed 64-bit key, one per deployment: 0x74663206 = "tf2" + feature 006. Every app copy
+# takes this same lock before migrating, which is what makes several copies starting at
+# once safe (FR-015). The value is arbitrary but must never change — a new value would let
+# an old and a new pod migrate concurrently.
+MIGRATION_LOCK_KEY = 0x74663206
 
-CREATE TABLE IF NOT EXISTS rgl_rosters (
-    rgl_team_id  INTEGER NOT NULL REFERENCES rgl_teams(rgl_team_id),
-    steam_id     TEXT NOT NULL,
-    name         TEXT NOT NULL,
-    is_leader    INTEGER NOT NULL DEFAULT 0,
-    PRIMARY KEY (rgl_team_id, steam_id)
-);
-
-CREATE TABLE IF NOT EXISTS rgl_roster_meta (
-    rgl_team_id  INTEGER PRIMARY KEY REFERENCES rgl_teams(rgl_team_id),
-    fetched_at   TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS rgl_seasons (
-    season_id         INTEGER PRIMARY KEY,
-    name              TEXT NOT NULL,
-    format            TEXT,
-    division_sorting  TEXT NOT NULL DEFAULT '{}',
-    fetched_at        TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS rgl_season_teams (
-    season_id    INTEGER NOT NULL REFERENCES rgl_seasons(season_id),
-    rgl_team_id  INTEGER NOT NULL,
-    division_id  INTEGER,
-    hydrated_at  TEXT,
-    PRIMARY KEY (season_id, rgl_team_id)
-);
-
-CREATE TABLE IF NOT EXISTS scrim_attendance (
-    scrim_id         INTEGER NOT NULL REFERENCES scrims(id),
-    player_steam_id  TEXT NOT NULL,
-    player_name      TEXT NOT NULL,
-    status           TEXT NOT NULL,
-    marked_by        TEXT NOT NULL REFERENCES users(steam_id),
-    updated_at       TEXT NOT NULL,
-    PRIMARY KEY (scrim_id, player_steam_id)
-);
-
--- feature 005: payment, credits, and servers. See specs/005-servers-page/data-model.md.
-
--- A user's own Steam trade URL. Its token is what lets us ask Steam whether a trade
--- from this user would be held, so it is a precondition of paying, not a nicety.
-CREATE TABLE IF NOT EXISTS steam_trade_links (
-    steam_id      TEXT PRIMARY KEY REFERENCES users(steam_id),
-    trade_url     TEXT NOT NULL,
-    partner_id    TEXT NOT NULL,
-    access_token  TEXT NOT NULL,
-    updated_at    TEXT NOT NULL
-);
-
--- One attempt to pay, by any method. `method` is what keeps the model open to
--- payment methods beyond Steam trades without reworking entitlement.
---
--- UNIQUE (method, provider_ref) is the exactly-once guarantee for crediting. The
--- poller re-reads the same offers on every run and can be run twice by hand, so
--- idempotency cannot rest on it behaving well — the store enforces it.
-CREATE TABLE IF NOT EXISTS payments (
-    id               INTEGER PRIMARY KEY AUTOINCREMENT,
-    steam_id         TEXT NOT NULL REFERENCES users(steam_id),
-    method           TEXT NOT NULL,
-    provider_ref     TEXT,
-    state            TEXT NOT NULL,
-    state_reason     TEXT,
-    items_expected   INTEGER NOT NULL,
-    items_received   INTEGER,
-    credits_granted  INTEGER,
-    hold_until       TEXT,
-    target_scrim_id  INTEGER REFERENCES scrims(id),
-    created_at       TEXT NOT NULL,
-    updated_at       TEXT NOT NULL,
-    UNIQUE (method, provider_ref)
-);
-
--- A server a team is entitled to. State is real; the compute behind it is simulated
--- this increment and replaced behind the same seam by feature 006.
---
--- The RCON/administrative password is deliberately absent: it belongs in the secret
--- store and must never be selectable into a template context.
-CREATE TABLE IF NOT EXISTS servers (
-    id                INTEGER PRIMARY KEY AUTOINCREMENT,
-    scrim_id          INTEGER REFERENCES scrims(id),
-    owner_steam_id    TEXT NOT NULL REFERENCES users(steam_id),
-    team_id           INTEGER REFERENCES rgl_teams(rgl_team_id),
-    state             TEXT NOT NULL,
-    name              TEXT NOT NULL,
-    map               TEXT NOT NULL,
-    max_slots         INTEGER NOT NULL,
-    join_password     TEXT,
-    address           TEXT,
-    players           INTEGER,
-    window_starts_at  TEXT,
-    window_ends_at    TEXT,
-    -- Season-term servers only (scrim_id IS NULL). Display-only for now: constitution
-    -- v3.1.0 settles the per-scrim credit but leaves the season-term purchase unit
-    -- undefined, so nothing can create one of these yet.
-    term_ends_at      TEXT,
-    grace_used        INTEGER NOT NULL DEFAULT 0,
-    demo              INTEGER NOT NULL DEFAULT 0,
-    stopped_reason    TEXT,
-    created_at        TEXT NOT NULL,
-    updated_at        TEXT NOT NULL
-);
-
-CREATE UNIQUE INDEX IF NOT EXISTS idx_servers_scrim ON servers(scrim_id)
-    WHERE scrim_id IS NOT NULL;
-
--- Append-only. The single source of truth for every balance: available credits are
--- SUM(delta), never a cached column that could disagree with these rows and leave
--- the ledger untrustworthy for exactly the dispute it exists to settle.
-CREATE TABLE IF NOT EXISTS credit_ledger (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    steam_id    TEXT NOT NULL REFERENCES users(steam_id),
-    delta       INTEGER NOT NULL,
-    kind        TEXT NOT NULL,
-    cause       TEXT NOT NULL,
-    payment_id  INTEGER REFERENCES payments(id),
-    scrim_id    INTEGER REFERENCES scrims(id),
-    server_id   INTEGER REFERENCES servers(id),
-    created_at  TEXT NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS idx_credit_ledger_steam_id ON credit_ledger(steam_id);
-"""
+# One pool per process, created lazily on first use. Never at import: a pool built at
+# import time would be inherited across Gunicorn's fork and share sockets between workers
+# (research R14). `migrate()` and `check()` deliberately do not use it, so importing the
+# app never creates one.
+_pool: ConnectionPool | None = None
 
 
-# Wait this long for a competing writer before giving up. SQLite's default is 0 —
-# a busy database fails instantly rather than waiting.
-BUSY_TIMEOUT_MS = 5000
+# --- configuration -----------------------------------------------------------------
 
+def _setting(name: str, default: str) -> str:
+    """Read config from the Flask app when there is one, else the environment, else `Config`.
 
-def connect(db_path: str) -> sqlite3.Connection:
-    """Open a connection with the pragmas this app depends on.
-
-    Every connection — request-scoped or CLI — MUST come through here. The payment
-    poller runs as a separate process from Gunicorn's workers, so writes genuinely
-    contend:
-
-    - `WAL` lets readers proceed while a writer holds the log. The default journal
-      mode takes a whole-database exclusive lock instead, so a page load during a
-      credit write would simply fail.
-    - `busy_timeout` turns "database is locked" into a bounded wait. Without it the
-      default is zero and a contended write raises immediately — which, on the
-      payment path, would present as a trade that silently never got credited.
-    - `foreign_keys` is OFF by default in SQLite, which has quietly made every
-      REFERENCES clause in SCHEMA decorative. The credit tables depend on
-      referential integrity far more than the existing ones do.
+    The seed script and the pytest preflight run outside an app context and still need to
+    reach the same store by the same path. Falling through to `Config` last means all three
+    resolve `DATABASE_URL` identically — a developer who forgot to export it gets the same
+    local default the app would have used, rather than a confusing "not set" from one entry
+    point and a working connection from another.
     """
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode = WAL")
-    conn.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}")
-    conn.execute("PRAGMA foreign_keys = ON")
-    return conn
+    if has_app_context():
+        value = current_app.config.get(name)
+        if value not in (None, ""):
+            return str(value)
+    value = os.environ.get(name)
+    if value not in (None, ""):
+        return value
+    return str(getattr(Config, name, default) or default)
 
 
-def get_db() -> sqlite3.Connection:
-    """Per-request SQLite connection, stored on Flask's `g`."""
+def dsn() -> str:
+    """The libpq connection string. Contains a password — never log or render it."""
+    value = _setting("DATABASE_URL", "")
+    if not value:
+        raise RuntimeError(
+            "DATABASE_URL is not set. Start a local store and export it:\n"
+            "  docker run -d --name tf2-pg -p 5432:5432 -e POSTGRES_PASSWORD=dev "
+            "-e POSTGRES_USER=tf2app -e POSTGRES_DB=tf2hosting postgres:17-alpine\n"
+            '  export DATABASE_URL="postgresql://tf2app:dev@localhost:5432/tf2hosting"'
+        )
+    return value
+
+
+def _connect_timeout() -> int:
+    return int(float(_setting("DB_CONNECT_TIMEOUT", "5")))
+
+
+def redact_dsn(value: str | None = None) -> str:
+    """`host:port/dbname` — the only form of the DSN allowed into a log or a response.
+
+    Constitution IV: store credentials must never be logged or sent to a client. An
+    operator debugging a connection failure needs to know *which* store was unreachable,
+    which is the host, port, and database name — never the password.
+    """
+    try:
+        value = dsn() if value is None else value
+    except RuntimeError:
+        return "<DATABASE_URL unset>"
+    try:
+        info = conninfo_to_dict(value)
+    except Exception:
+        return "<unparseable DSN>"
+    host = info.get("host") or "localhost"
+    port = info.get("port") or "5432"
+    dbname = info.get("dbname") or "?"
+    return f"{host}:{port}/{dbname}"
+
+
+# --- connections -------------------------------------------------------------------
+
+def _get_pool() -> ConnectionPool:
+    global _pool
+    if _pool is None:
+        min_size = int(_setting("DB_POOL_MIN", "1"))
+        max_size = int(_setting("DB_POOL_MAX", "4"))
+        timeout = _connect_timeout()
+        _pool = ConnectionPool(
+            conninfo=dsn(),
+            min_size=min_size,
+            max_size=max_size,
+            # Give up waiting for a free connection rather than hanging a request
+            # indefinitely; an unreachable store must surface as a failure, not a stall.
+            timeout=timeout,
+            kwargs={
+                "row_factory": dict_row,
+                "autocommit": False,
+                "connect_timeout": timeout,
+            },
+            # A connection broken while idle in the pool (the spec's "brief connection
+            # interruption" edge case) is discarded and replaced at checkout rather than
+            # handed to a request. No operator restart, no retry logic at the call sites.
+            check=ConnectionPool.check_connection,
+            name="tf2-hosting",
+            open=False,
+        )
+        _pool.open()
+    return _pool
+
+
+def get_db() -> psycopg.Connection:
+    """Per-request connection, checked out of this process's pool and cached on `g`.
+
+    Rows are `dict` (`row_factory=dict_row`), so `row["steam_id"]`, `dict(row)`, and
+    `{**dict(r)}` all work as they did with the old row factory. Positional access (`row[0]`)
+    does not, which is why the few sites that used it now select named columns.
+
+    `autocommit=False`: a transaction opens implicitly on first execute and ends at
+    `commit()` / `rollback()` — the same semantics `sqlite3` gave, so existing
+    `db.commit()` calls stay exactly where they are.
+    """
     if "db" not in g:
-        g.db = connect(current_app.config["DB_PATH"])
+        g.db = _get_pool().getconn()
     return g.db
 
 
 def close_db(_exc=None) -> None:
+    """Return the connection to the pool. Registered on `teardown_appcontext`.
+
+    `putconn` rolls back any open transaction first, so uncommitted work is discarded when
+    a request ends — matching what closing a SQLite connection did.
+    """
     conn = g.pop("db", None)
-    if conn is not None:
-        conn.close()
+    g.pop("_tx_depth", None)
+    if conn is not None and _pool is not None:
+        _pool.putconn(conn)
 
 
-def init_schema(app) -> None:
-    """Create tables if absent. Idempotent; safe to call on every startup."""
-    conn = connect(app.config["DB_PATH"])
+def close_pool() -> None:
+    """Close this process's pool. For test teardown and orderly shutdown."""
+    global _pool
+    if _pool is not None:
+        _pool.close()
+        _pool = None
+
+
+@contextmanager
+def transaction() -> Iterator[psycopg.Connection]:
+    """Commit on clean exit, roll back on any exception.
+
+    For the multi-statement writes FR-012 requires to land atomically: a credit
+    reservation and the server it reserves for, a credit grant and the payment state
+    change that justifies it.
+
+    **Nesting participates rather than nests.** `attach_to_scrim` opens a transaction and
+    calls into `credits.reserve`, which wants one too. Only the outermost block commits;
+    inner blocks are a no-op on exit. Without this the inner block would commit half an
+    attach, which is the exact bug FR-012 exists to forbid.
+    """
+    db = get_db()
+    depth = g.get("_tx_depth", 0)
+    g._tx_depth = depth + 1
     try:
-        conn.executescript(SCHEMA)
-        conn.commit()
-    finally:
-        conn.close()
+        yield db
+    except BaseException:
+        if depth == 0:
+            db.rollback()
+        g._tx_depth = depth
+        raise
+    else:
+        if depth == 0:
+            db.commit()
+        g._tx_depth = depth
+
+
+def check() -> None:
+    """`SELECT 1` against the store. Raises on failure.
+
+    Used by `/healthz` (FR-016) and by the pytest session preflight (FR-024). Deliberately
+    a fresh connection rather than a pooled one: this answers "is the store reachable right
+    now", and it has to work before any pool exists.
+    """
+    with psycopg.connect(dsn(), connect_timeout=_connect_timeout()) as conn:
+        conn.execute("SELECT 1")
+
+
+# --- migrations --------------------------------------------------------------------
+
+def migrate() -> list[str]:
+    """Apply pending migrations in filename order. Returns the versions applied.
+
+    Called once from `create_app()`, replacing the old `init_schema()`. Protocol
+    (FR-015, FR-019):
+
+    1. Take `pg_advisory_lock(MIGRATION_LOCK_KEY)`.
+    2. Ensure `schema_migrations` exists.
+    3. Apply each `migrations/*.sql` not yet recorded, in filename order, each inside its
+       own transaction together with the row recording it.
+    4. Release the lock in a `finally`.
+
+    Several app copies starting at once: the first takes the lock, the rest block briefly
+    and then find nothing to do. Exactly one initialisation takes effect and no copy fails
+    because it lost the race. A naked `CREATE TABLE IF NOT EXISTS` from two connections at
+    once can genuinely collide on Postgres system catalogs, so the lock is doing real work.
+
+    Postgres DDL is transactional, so a migration that fails midway leaves nothing
+    half-created and its version is not recorded.
+
+    Uses its own connection, not the pool — this runs at startup, potentially before fork,
+    and it needs a session-level lock held across several transactions.
+    """
+    applied: list[str] = []
+    with psycopg.connect(
+        dsn(), autocommit=True, row_factory=dict_row, connect_timeout=_connect_timeout()
+    ) as conn:
+        conn.execute("SELECT pg_advisory_lock(%s)", (MIGRATION_LOCK_KEY,))
+        try:
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS schema_migrations ("
+                "    version     text PRIMARY KEY,"
+                "    applied_at  timestamptz NOT NULL DEFAULT now()"
+                ")"
+            )
+            done = {
+                row["version"]
+                for row in conn.execute("SELECT version FROM schema_migrations").fetchall()
+            }
+            for path in sorted(MIGRATIONS_DIR.glob("*.sql")):
+                version = path.stem
+                if version in done:
+                    continue
+                with conn.transaction():
+                    conn.execute(path.read_text())
+                    conn.execute(
+                        "INSERT INTO schema_migrations (version) VALUES (%s)", (version,)
+                    )
+                applied.append(version)
+                log.info("applied migration %s", version)
+        finally:
+            conn.execute("SELECT pg_advisory_unlock(%s)", (MIGRATION_LOCK_KEY,))
+    return applied

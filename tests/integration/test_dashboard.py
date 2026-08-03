@@ -33,7 +33,7 @@ def backdate_all_listings(app, days=1):
     when = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat(timespec="seconds")
     with app.test_request_context():
         from app.db import get_db
-        get_db().execute("UPDATE scrims SET scheduled_at = ? WHERE origin = 'listing'", (when,))
+        get_db().execute("UPDATE scrims SET scheduled_at = %s WHERE origin = 'listing'", (when,))
         get_db().commit()
 
 

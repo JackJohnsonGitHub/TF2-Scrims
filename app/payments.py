@@ -93,7 +93,7 @@ def save_trade_link(steam_id: str, url: str) -> None:
     db.execute(
         """INSERT INTO steam_trade_links (steam_id, trade_url, partner_id,
                                           access_token, updated_at)
-           VALUES (?,?,?,?,?)
+           VALUES (%s,%s,%s,%s,%s)
            ON CONFLICT(steam_id) DO UPDATE SET
                trade_url = excluded.trade_url,
                partner_id = excluded.partner_id,
@@ -106,13 +106,13 @@ def save_trade_link(steam_id: str, url: str) -> None:
 
 def get_trade_link(steam_id: str) -> dict | None:
     row = get_db().execute(
-        "SELECT * FROM steam_trade_links WHERE steam_id = ?", (steam_id,)).fetchone()
+        "SELECT * FROM steam_trade_links WHERE steam_id = %s", (steam_id,)).fetchone()
     return dict(row) if row else None
 
 
 def delete_trade_link(steam_id: str) -> None:
     db = get_db()
-    db.execute("DELETE FROM steam_trade_links WHERE steam_id = ?", (steam_id,))
+    db.execute("DELETE FROM steam_trade_links WHERE steam_id = %s", (steam_id,))
     db.commit()
 
 
@@ -120,7 +120,7 @@ def delete_trade_link(steam_id: str) -> None:
 
 def open_payment(steam_id: str) -> dict | None:
     row = get_db().execute(
-        f"""{_SELECT_WITH_TARGET} WHERE p.steam_id = ? AND p.state IN (?, ?)
+        f"""{_SELECT_WITH_TARGET} WHERE p.steam_id = %s AND p.state IN (%s, %s)
             ORDER BY p.id DESC LIMIT 1""",
         (steam_id, STARTED, HELD),
     ).fetchone()
@@ -165,7 +165,7 @@ def _annotate(row) -> dict:
 
 def recent_payments(steam_id: str, limit: int = 20) -> list[dict]:
     rows = get_db().execute(
-        f"{_SELECT_WITH_TARGET} WHERE p.steam_id = ? ORDER BY p.id DESC LIMIT ?",
+        f"{_SELECT_WITH_TARGET} WHERE p.steam_id = %s ORDER BY p.id DESC LIMIT %s",
         (steam_id, limit),
     ).fetchall()
     return [_annotate(r) for r in rows]
@@ -256,13 +256,15 @@ def start_payment(steam_id: str, target_scrim_id=None) -> dict:
     cur = db.execute(
         """INSERT INTO payments (steam_id, method, state, items_expected,
                                  target_scrim_id, created_at, updated_at)
-           VALUES (?,?,?,?,?,?,?)""",
+           VALUES (%s,%s,%s,%s,%s,%s,%s)
+           RETURNING id""",
         (steam_id, METHOD_STEAM_TRADE, STARTED,
          current_app.config["PAYMENT_MIN_KEYS"], target_scrim_id, now, now),
     )
+    payment_id = cur.fetchone()["id"]
     db.commit()
     return dict(get_db().execute(
-        "SELECT * FROM payments WHERE id = ?", (cur.lastrowid,)).fetchone())
+        "SELECT * FROM payments WHERE id = %s", (payment_id,)).fetchone())
 
 
 def abandon(steam_id: str, payment_id) -> None:
@@ -274,9 +276,9 @@ def abandon(steam_id: str, payment_id) -> None:
     """
     db = get_db()
     db.execute(
-        """UPDATE payments SET state = ?, state_reason = ?, updated_at = ?
-           WHERE id = ? AND steam_id = ? AND provider_ref IS NULL
-             AND state IN (?, ?)""",
+        """UPDATE payments SET state = %s, state_reason = %s, updated_at = %s
+           WHERE id = %s AND steam_id = %s AND provider_ref IS NULL
+             AND state IN (%s, %s)""",
         (FAILED, "Abandoned before a trade was sent.", utc_now(), payment_id,
          steam_id, STARTED, HELD),
     )
@@ -287,8 +289,8 @@ def _set_state(payment_id, state: str, *, reason: str | None = None,
                items_received: int | None = None, hold_until: str | None = None) -> None:
     db = get_db()
     db.execute(
-        """UPDATE payments SET state = ?, state_reason = ?, items_received = ?,
-                               hold_until = ?, updated_at = ? WHERE id = ?""",
+        """UPDATE payments SET state = %s, state_reason = %s, items_received = %s,
+                               hold_until = %s, updated_at = %s WHERE id = %s""",
         (state, reason, items_received, hold_until, utc_now(), payment_id),
     )
     db.commit()
@@ -304,8 +306,8 @@ def _claim_offer(payment_id, offer_id: str) -> bool:
     db = get_db()
     try:
         cur = db.execute(
-            """UPDATE payments SET provider_ref = ?, updated_at = ?
-               WHERE id = ? AND provider_ref IS NULL""",
+            """UPDATE payments SET provider_ref = %s, updated_at = %s
+               WHERE id = %s AND provider_ref IS NULL""",
             (offer_id, utc_now(), payment_id),
         )
         db.commit()
@@ -317,7 +319,7 @@ def _claim_offer(payment_id, offer_id: str) -> bool:
 
 def _payment_for_offer(offer_id: str):
     row = get_db().execute(
-        "SELECT * FROM payments WHERE method = ? AND provider_ref = ?",
+        "SELECT * FROM payments WHERE method = %s AND provider_ref = %s",
         (METHOD_STEAM_TRADE, offer_id),
     ).fetchone()
     return dict(row) if row else None
@@ -325,36 +327,54 @@ def _payment_for_offer(offer_id: str):
 
 def _oldest_unclaimed(steam_id: str):
     row = get_db().execute(
-        """SELECT * FROM payments WHERE steam_id = ? AND method = ?
-           AND provider_ref IS NULL AND state IN (?, ?)
+        """SELECT * FROM payments WHERE steam_id = %s AND method = %s
+           AND provider_ref IS NULL AND state IN (%s, %s)
            ORDER BY id ASC LIMIT 1""",
         (steam_id, METHOD_STEAM_TRADE, STARTED, HELD),
     ).fetchone()
     return dict(row) if row else None
 
 
-def _complete(payment: dict, keys: int) -> int:
+def _complete(payment: dict, keys: int) -> int | None:
     """Grant credits and mark the payment complete in one transaction.
 
     Both halves together or neither: a grant without a completed payment could be
     re-granted on the next poll, and a completed payment without a grant is money taken
     for nothing.
+
+    **The state change goes first, and it is a compare-and-set.** `WHERE state <> COMPLETE`
+    takes the payment's row lock and decides, in the store, which caller is allowed to
+    grant. A second caller blocks on that row, re-evaluates once the first commits, sees
+    `complete`, matches nothing, and returns without granting.
+
+    That ordering is load-bearing rather than stylistic. `reconcile_offer` claims the offer
+    in one transaction and completes it in another; a poller arriving between those two
+    commits finds the payment already claimed and skips the claim gate on that basis, so
+    this is the only thing standing between it and a second grant. Twelve concurrent
+    replays of one payment produced three grants before this existed — silently, on the
+    money path. The partial unique index in migration 0002 is the backstop underneath it
+    (FR-009: guaranteed by the store, not only by the code paths that call it).
+
+    Returns the credits granted, or `None` when another process had already completed it.
     """
     amount = credits_for_keys(keys)
     db = get_db()
     try:
-        # One implicit transaction, one commit: the grant and the state change land
-        # together or not at all.
+        cur = db.execute(
+            """UPDATE payments SET state = %s, state_reason = NULL, items_received = %s,
+                                   credits_granted = %s, hold_until = NULL,
+                                   updated_at = %s WHERE id = %s AND state <> %s""",
+            (COMPLETE, keys, amount, utc_now(), payment["id"], COMPLETE),
+        )
+        if cur.rowcount != 1:
+            # Somebody else completed it. Nothing to do, and nothing to report: the
+            # credits are already on the account.
+            db.rollback()
+            return None
         credits.grant(
             payment["steam_id"], amount,
             f"{keys} × {current_app.config['PAYMENT_ITEM_NAME']}",
             payment_id=payment["id"],
-        )
-        db.execute(
-            """UPDATE payments SET state = ?, state_reason = NULL, items_received = ?,
-                                   credits_granted = ?, hold_until = NULL,
-                                   updated_at = ? WHERE id = ?""",
-            (COMPLETE, keys, amount, utc_now(), payment["id"]),
         )
         db.commit()
         return amount
@@ -414,6 +434,8 @@ def reconcile_offer(offer) -> str | None:
             )
             return f"payment {payment['id']} insufficient ({keys} keys)"
         amount = _complete(payment, keys)
+        if amount is None:
+            return None  # another poller completed it; nothing changed here
         return f"payment {payment['id']} complete (+{amount} credits)"
 
     return None

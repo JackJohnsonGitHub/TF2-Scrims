@@ -14,22 +14,30 @@ def _now() -> str:
 
 def upsert_on_login(steam_id: str, persona_name: str, avatar_url: str | None) -> dict:
     """Create the account on first sign-in, or refresh persona/avatar/last_login on
-    a returning sign-in. Never creates a duplicate for the same steam_id (SC-006)."""
+    a returning sign-in. Never creates a duplicate for the same steam_id (SC-006).
+
+    One statement, not a read-then-write. Two simultaneous first sign-ins for the same
+    account — two app copies, or a double-clicked login — both saw `existing is None` and
+    both inserted, and the loser surfaced a unique violation as an error page on somebody's
+    very first visit. SQLite's serialized writer made that nearly unreachable; running more
+    than one copy of the app (FR-014) makes it reachable, so it is closed here rather than
+    left to timing (research R19).
+
+    `created_at` is deliberately not in the UPDATE clause: a returning sign-in refreshes
+    the persona, the avatar, and the last login, and must never rewrite when the account
+    was created.
+    """
     db = get_db()
     now = _now()
-    existing = get_by_steam_id(steam_id)
-    if existing is None:
-        db.execute(
-            "INSERT INTO users (steam_id, persona_name, avatar_url, created_at, last_login_at)"
-            " VALUES (?, ?, ?, ?, ?)",
-            (steam_id, persona_name, avatar_url, now, now),
-        )
-    else:
-        db.execute(
-            "UPDATE users SET persona_name = ?, avatar_url = ?, last_login_at = ?"
-            " WHERE steam_id = ?",
-            (persona_name, avatar_url, now, steam_id),
-        )
+    db.execute(
+        """INSERT INTO users (steam_id, persona_name, avatar_url, created_at, last_login_at)
+           VALUES (%s, %s, %s, %s, %s)
+           ON CONFLICT (steam_id) DO UPDATE SET
+               persona_name  = excluded.persona_name,
+               avatar_url    = excluded.avatar_url,
+               last_login_at = excluded.last_login_at""",
+        (steam_id, persona_name, avatar_url, now, now),
+    )
     db.commit()
     return get_by_steam_id(steam_id)
 
@@ -37,7 +45,7 @@ def upsert_on_login(steam_id: str, persona_name: str, avatar_url: str | None) ->
 def get_by_steam_id(steam_id: str) -> dict | None:
     row = get_db().execute(
         "SELECT steam_id, persona_name, avatar_url, created_at, last_login_at"
-        " FROM users WHERE steam_id = ?",
+        " FROM users WHERE steam_id = %s",
         (steam_id,),
     ).fetchone()
     return dict(row) if row is not None else None

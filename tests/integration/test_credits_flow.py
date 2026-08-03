@@ -292,7 +292,7 @@ def test_a_window_running_out_enters_grace_then_stops(client, signed_in, app):
     with app.test_request_context():
         from app.db import get_db
         past = (datetime.now(timezone.utc) - timedelta(minutes=20)).isoformat(timespec="seconds")
-        get_db().execute("UPDATE servers SET window_ends_at = ? WHERE id = ?",
+        get_db().execute("UPDATE servers SET window_ends_at = %s WHERE id = %s",
                          (past, server_id))
         get_db().commit()
     runner.invoke(args=["reconcile-servers"])
@@ -330,7 +330,7 @@ def test_the_grace_is_once_per_server_not_once_per_window(client, signed_in, app
     with app.test_request_context():
         from app.db import get_db
         past = (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat(timespec="seconds")
-        get_db().execute("UPDATE servers SET window_ends_at = ?, state = ? WHERE id = ?",
+        get_db().execute("UPDATE servers SET window_ends_at = %s, state = %s WHERE id = %s",
                          (past, store.RUNNING, server_id))
         get_db().commit()
     runner.invoke(args=["reconcile-servers"])
@@ -391,12 +391,14 @@ def _scrim(app, steam_id, status="open", days=2):
         cur = db.execute(
             """INSERT INTO scrims (format, scheduled_at, origin, proposer_team_id,
                                    status, created_by, created_at, updated_at)
-               VALUES ('sixes', ?, 'listing', ?, ?, ?, ?, ?)""",
+               VALUES ('sixes', %s, 'listing', %s, %s, %s, %s, %s)
+               RETURNING id""",
             ((now + timedelta(days=days)).isoformat(timespec="seconds"), TEAM, status,
              steam_id, now.isoformat(timespec="seconds"),
              now.isoformat(timespec="seconds")))
+        scrim_id = cur.fetchone()["id"]
         db.commit()
-        return cur.lastrowid
+        return scrim_id
 
 
 def _start_for_scrim(client, monkeypatch, scrim_id):
@@ -423,7 +425,7 @@ def test_a_cancelled_target_scrim_is_reported_without_killing_the_payment(
     _start_for_scrim(client, monkeypatch, scrim_id)
 
     with app.test_request_context():
-        get_db().execute("UPDATE scrims SET status = 'cancelled' WHERE id = ?", (scrim_id,))
+        get_db().execute("UPDATE scrims SET status = 'cancelled' WHERE id = %s", (scrim_id,))
         get_db().commit()
 
     body = client.get("/credits").get_data(as_text=True)
@@ -441,7 +443,7 @@ def test_a_past_target_scrim_is_reported(client, signed_in, app, monkeypatch):
 
     with app.test_request_context():
         past = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat(timespec="seconds")
-        get_db().execute("UPDATE scrims SET scheduled_at = ? WHERE id = ?", (past, scrim_id))
+        get_db().execute("UPDATE scrims SET scheduled_at = %s WHERE id = %s", (past, scrim_id))
         get_db().commit()
 
     assert "has already started" in client.get("/credits").get_data(as_text=True)
@@ -456,7 +458,7 @@ def test_a_stale_target_still_credits_normally(client, signed_in, app, monkeypat
     client.post("/credits/trade/start", data={"scrim_id": scrim_id})
 
     with app.test_request_context():
-        get_db().execute("UPDATE scrims SET status = 'cancelled' WHERE id = ?", (scrim_id,))
+        get_db().execute("UPDATE scrims SET status = 'cancelled' WHERE id = %s", (scrim_id,))
         get_db().commit()
 
     app.test_cli_runner().invoke(args=["poll-payments"])

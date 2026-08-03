@@ -146,7 +146,7 @@ def test_ensure_season_stale_if_error(app, monkeypatch):
     stale = (datetime.now(timezone.utc) - timedelta(days=2)).isoformat(timespec="seconds")
     with app.test_request_context():
         ensure_season(140)
-        get_db().execute("UPDATE rgl_seasons SET fetched_at = ?", (stale,))
+        get_db().execute("UPDATE rgl_seasons SET fetched_at = %s", (stale,))
         get_db().commit()
         monkeypatch.setattr("app.rgl.fetch_season",
                             lambda sid: RglSeason(outcome="unavailable"))

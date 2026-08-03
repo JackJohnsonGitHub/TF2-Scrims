@@ -1,7 +1,11 @@
-"""Integration tests for Steam sign-in — Steam calls are mocked (no network)."""
-import sqlite3
+"""Integration tests for Steam sign-in — Steam calls are mocked (no network).
 
+These used to open their own driver connection to check what landed in the store. They go
+through the app's connection now (FR-023): one access path, so a test cannot accidentally
+verify against different connection settings than the code it is testing.
+"""
 import app.routes.auth as auth_routes
+from app.db import get_db
 
 STEAM_ID = "76561198000000123"
 
@@ -30,10 +34,11 @@ def test_valid_return_creates_user_and_session(client, app, monkeypatch):
     assert resp.headers["Location"].endswith("/")  # dashboard
 
     # A users row now exists and the header shows the persona.
-    rows = sqlite3.connect(app.config["DB_PATH"]).execute(
-        "SELECT persona_name FROM users WHERE steam_id = ?", (STEAM_ID,)
-    ).fetchall()
-    assert rows == [("Rocket Jumper",)]
+    with app.test_request_context():
+        rows = get_db().execute(
+            "SELECT persona_name FROM users WHERE steam_id = %s", (STEAM_ID,)
+        ).fetchall()
+    assert [r["persona_name"] for r in rows] == ["Rocket Jumper"]
     assert b"Rocket Jumper" in client.get("/").data
 
 
@@ -52,9 +57,10 @@ def test_returning_user_is_single_account(client, app, monkeypatch):
     client.get("/login/return?openid.claimed_id=x")
     client.get("/logout")
     client.get("/login/return?openid.claimed_id=x")  # sign in again
-    count = sqlite3.connect(app.config["DB_PATH"]).execute(
-        "SELECT COUNT(*) FROM users WHERE steam_id = ?", (STEAM_ID,)
-    ).fetchone()[0]
+    with app.test_request_context():
+        count = get_db().execute(
+            "SELECT COUNT(*) AS c FROM users WHERE steam_id = %s", (STEAM_ID,)
+        ).fetchone()["c"]
     assert count == 1
 
 

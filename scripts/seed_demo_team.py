@@ -21,18 +21,27 @@ tracker — it renders only for members of the team that POSTED the listing — 
 the last item above exists. Its roster is your team's real one from RGL, not a fake:
 seeding fake players onto a real team would be erased the next time RGL is polled.
 
+This is the documented way to make an empty store a usable starting point (FR-006), and
+it reaches the store through `app/db.py` like every other process does (FR-023) — no
+driver connection of its own, so connection settings and integrity guarantees cannot
+drift between it and the app.
+
 Usage:
-  python3 scripts/seed_demo_team.py            # seed against $DB_PATH (default app.db)
+  python3 scripts/seed_demo_team.py            # seed against $DATABASE_URL
   python3 scripts/seed_demo_team.py --clean    # remove everything it created
-  python3 scripts/seed_demo_team.py --db path/to.db
+  python3 scripts/seed_demo_team.py --dsn postgresql://user:pass@host:5432/db
 
 Re-run after using "refresh" on your RGL link if demo data seems stale; safe to run
 any number of times.
 """
 import argparse
 import os
-import sqlite3
+import sys
 from datetime import datetime, timedelta, timezone
+
+import psycopg
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 DEMO_STEAM_ID = "90000000000000001"
 DEMO_PERSONA = "Demo Rival Captain"
@@ -84,35 +93,35 @@ def in_days(days: float) -> str:
     return (datetime.now(timezone.utc) + timedelta(days=days)).isoformat(timespec="seconds")
 
 
-def seed_roster(db: sqlite3.Connection, team_id: int, fmt: str, now: str) -> int:
+def seed_roster(db: psycopg.Connection, team_id: int, fmt: str, now: str) -> int:
     """Replace a demo team's cached roster with the fake one for its format. The
     demo captain leads; the rest are roster-only players with no app account (which
     is realistic — most RGL players on an opposing roster will never sign in here,
     and the attendance creator path is specified to handle exactly that)."""
-    db.execute("DELETE FROM rgl_rosters WHERE rgl_team_id = ?", (team_id,))
+    db.execute("DELETE FROM rgl_rosters WHERE rgl_team_id = %s", (team_id,))
     db.execute(
         """INSERT INTO rgl_rosters (rgl_team_id, steam_id, name, is_leader)
-           VALUES (?, ?, ?, 1)""",
+           VALUES (%s, %s, %s, 1)""",
         (team_id, DEMO_STEAM_ID, DEMO_PERSONA),
     )
     for index, name in enumerate(DEMO_ROSTER_NAMES[fmt], start=1):
         db.execute(
             """INSERT INTO rgl_rosters (rgl_team_id, steam_id, name, is_leader)
-               VALUES (?, ?, ?, 0)""",
+               VALUES (%s, %s, %s, 0)""",
             (team_id, roster_steam_id(fmt, index), name),
         )
     # Stamping the fetch keeps ensure_roster from calling RGL for an id it can
     # never resolve; a stale stamp is harmless either way (the 404 leaves the
     # cache untouched), this just keeps the log quiet.
     db.execute(
-        """INSERT INTO rgl_roster_meta (rgl_team_id, fetched_at) VALUES (?, ?)
+        """INSERT INTO rgl_roster_meta (rgl_team_id, fetched_at) VALUES (%s, %s)
            ON CONFLICT(rgl_team_id) DO UPDATE SET fetched_at = excluded.fetched_at""",
         (team_id, now),
     )
     return len(DEMO_ROSTER_NAMES[fmt]) + 1
 
 
-def seed_servers(db: sqlite3.Connection, team_id: int, name: str, now: str) -> int:
+def seed_servers(db: psycopg.Connection, team_id: int, name: str, now: str) -> int:
     """Two demo servers for a demo team — one running, one stopped.
 
     They belong to the demo rival, not to you, which is the point: the access rule
@@ -120,8 +129,8 @@ def seed_servers(db: sqlite3.Connection, team_id: int, name: str, now: str) -> i
     it. They are also flagged `demo` so no screen can pass them off as real.
     """
     existing = db.execute(
-        "SELECT COUNT(*) FROM servers WHERE team_id = ? AND demo = 1", (team_id,)
-    ).fetchone()[0]
+        "SELECT COUNT(*) AS c FROM servers WHERE team_id = %s AND demo = 1", (team_id,)
+    ).fetchone()["c"]
     if existing:
         return 0
     rows = [
@@ -134,63 +143,63 @@ def seed_servers(db: sqlite3.Connection, team_id: int, name: str, now: str) -> i
             """INSERT INTO servers (owner_steam_id, team_id, state, name, map,
                                     max_slots, address, players, demo,
                                     stopped_reason, created_at, updated_at)
-               VALUES (?,?,?,?,?,?,?,?,1,?,?,?)""",
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,1,%s,%s,%s)""",
             (DEMO_STEAM_ID, team_id, state, srv_name, map_name, slots, address,
              players, None if state == "running" else "time_expired", now, now),
         )
     return len(rows)
 
 
-def clean(db: sqlite3.Connection) -> None:
-    ph = ",".join("?" * len(DEMO_TEAM_IDS))
+def clean(db: psycopg.Connection) -> None:
+    ph = ",".join(["%s"] * len(DEMO_TEAM_IDS))
     # Servers before scrims: a per-scrim server references its scrim, and foreign keys
     # are enforced as of feature 005 — deleting the scrim first would now fail.
     db.execute(
         f"""DELETE FROM credit_ledger WHERE server_id IN (
                 SELECT id FROM servers WHERE team_id IN ({ph})
-                OR owner_steam_id = ?)""",
+                OR owner_steam_id = %s)""",
         (*DEMO_TEAM_IDS, DEMO_STEAM_ID),
     )
     db.execute(
-        f"DELETE FROM servers WHERE team_id IN ({ph}) OR owner_steam_id = ?",
+        f"DELETE FROM servers WHERE team_id IN ({ph}) OR owner_steam_id = %s",
         (*DEMO_TEAM_IDS, DEMO_STEAM_ID),
     )
     db.execute(
         f"""DELETE FROM credit_ledger WHERE scrim_id IN (
                 SELECT id FROM scrims WHERE proposer_team_id IN ({ph})
-                OR opponent_team_id IN ({ph}) OR created_by = ? OR notes = ?)""",
+                OR opponent_team_id IN ({ph}) OR created_by = %s OR notes = %s)""",
         (*DEMO_TEAM_IDS, *DEMO_TEAM_IDS, DEMO_STEAM_ID, ATTENDANCE_NOTE),
     )
-    db.execute("DELETE FROM credit_ledger WHERE steam_id = ?", (DEMO_STEAM_ID,))
-    db.execute("DELETE FROM payments WHERE steam_id = ?", (DEMO_STEAM_ID,))
-    db.execute("DELETE FROM steam_trade_links WHERE steam_id = ?", (DEMO_STEAM_ID,))
+    db.execute("DELETE FROM credit_ledger WHERE steam_id = %s", (DEMO_STEAM_ID,))
+    db.execute("DELETE FROM payments WHERE steam_id = %s", (DEMO_STEAM_ID,))
+    db.execute("DELETE FROM steam_trade_links WHERE steam_id = %s", (DEMO_STEAM_ID,))
     # Attendance rows first — no ON DELETE CASCADE, so they would outlive their
     # scrim and reappear against a re-seeded one with the same id.
     db.execute(
         f"""DELETE FROM scrim_attendance WHERE scrim_id IN (
                 SELECT id FROM scrims WHERE proposer_team_id IN ({ph})
-                OR opponent_team_id IN ({ph}) OR created_by = ? OR notes = ?)""",
+                OR opponent_team_id IN ({ph}) OR created_by = %s OR notes = %s)""",
         (*DEMO_TEAM_IDS, *DEMO_TEAM_IDS, DEMO_STEAM_ID, ATTENDANCE_NOTE),
     )
     n = db.execute(
         f"""DELETE FROM scrims WHERE proposer_team_id IN ({ph})
-            OR opponent_team_id IN ({ph}) OR created_by = ? OR notes = ?""",
+            OR opponent_team_id IN ({ph}) OR created_by = %s OR notes = %s""",
         (*DEMO_TEAM_IDS, *DEMO_TEAM_IDS, DEMO_STEAM_ID, ATTENDANCE_NOTE),
     ).rowcount
     db.execute(
-        f"DELETE FROM rgl_memberships WHERE rgl_team_id IN ({ph}) OR steam_id = ?",
+        f"DELETE FROM rgl_memberships WHERE rgl_team_id IN ({ph}) OR steam_id = %s",
         (*DEMO_TEAM_IDS, DEMO_STEAM_ID),
     )
     db.execute(f"DELETE FROM rgl_rosters WHERE rgl_team_id IN ({ph})", DEMO_TEAM_IDS)
     db.execute(f"DELETE FROM rgl_roster_meta WHERE rgl_team_id IN ({ph})", DEMO_TEAM_IDS)
     db.execute(f"DELETE FROM rgl_teams WHERE rgl_team_id IN ({ph})", DEMO_TEAM_IDS)
-    db.execute("DELETE FROM users WHERE steam_id = ?", (DEMO_STEAM_ID,))
+    db.execute("DELETE FROM users WHERE steam_id = %s", (DEMO_STEAM_ID,))
     db.commit()
     print(f"Removed demo user, demo teams, demo rosters, demo servers, "
           f"credits and {n} demo scrim(s).")
 
 
-def seed(db: sqlite3.Connection) -> None:
+def seed(db: psycopg.Connection) -> None:
     now = utc_now()
 
     # Formats the real linked users actually play — only seed rivals they can face.
@@ -199,7 +208,7 @@ def seed(db: sqlite3.Connection) -> None:
         for r in db.execute(
             """SELECT DISTINCT t.format FROM rgl_teams t
                JOIN rgl_memberships m ON m.rgl_team_id = t.rgl_team_id
-               WHERE m.steam_id != ?""",
+               WHERE m.steam_id != %s""",
             (DEMO_STEAM_ID,),
         )
     }
@@ -211,7 +220,7 @@ def seed(db: sqlite3.Connection) -> None:
 
     db.execute(
         """INSERT INTO users (steam_id, persona_name, created_at, last_login_at)
-           VALUES (?, ?, ?, ?)
+           VALUES (%s, %s, %s, %s)
            ON CONFLICT(steam_id) DO UPDATE SET persona_name = excluded.persona_name""",
         (DEMO_STEAM_ID, DEMO_PERSONA, now, now),
     )
@@ -221,14 +230,15 @@ def seed(db: sqlite3.Connection) -> None:
         db.execute(
             """INSERT INTO rgl_teams (rgl_team_id, name, tag, format, division_name,
                                       season_id, updated_at)
-               VALUES (?, ?, ?, ?, ?, NULL, ?)
+               VALUES (%s, %s, %s, %s, %s, NULL, %s)
                ON CONFLICT(rgl_team_id) DO UPDATE SET name = excluded.name,
                    tag = excluded.tag, division_name = excluded.division_name,
                    updated_at = excluded.updated_at""",
             (team_id, name, tag, fmt, division, now),
         )
         db.execute(
-            "INSERT OR IGNORE INTO rgl_memberships (steam_id, rgl_team_id) VALUES (?, ?)",
+            "INSERT INTO rgl_memberships (steam_id, rgl_team_id) VALUES (%s, %s)"
+            " ON CONFLICT DO NOTHING",
             (DEMO_STEAM_ID, team_id),
         )
         size = seed_roster(db, team_id, fmt, now)
@@ -239,8 +249,8 @@ def seed(db: sqlite3.Connection) -> None:
 
         # One future open listing from the demo team, claimable by a real team.
         have_listing = db.execute(
-            """SELECT 1 FROM scrims WHERE proposer_team_id = ? AND origin = 'listing'
-               AND status = 'open' AND scheduled_at > ?""",
+            """SELECT 1 FROM scrims WHERE proposer_team_id = %s AND origin = 'listing'
+               AND status = 'open' AND scheduled_at > %s""",
             (team_id, now),
         ).fetchone()
         if not have_listing:
@@ -248,7 +258,7 @@ def seed(db: sqlite3.Connection) -> None:
                 """INSERT INTO scrims (format, scheduled_at, origin, proposer_team_id,
                                        opponent_team_id, status, created_by, created_at,
                                        updated_at, notes)
-                   VALUES (?, ?, 'listing', ?, NULL, 'open', ?, ?, ?, ?)""",
+                   VALUES (%s, %s, 'listing', %s, NULL, 'open', %s, %s, %s, %s)""",
                 (fmt, in_days(2), team_id, DEMO_STEAM_ID, now, now,
                  "Demo listing — claim me to test the flow."),
             )
@@ -262,13 +272,13 @@ def seed(db: sqlite3.Connection) -> None:
             """SELECT t.rgl_team_id, t.name, MIN(m.steam_id) AS member_steam_id
                FROM rgl_teams t
                JOIN rgl_memberships m ON m.rgl_team_id = t.rgl_team_id
-               WHERE t.format = ? AND m.steam_id != ?
+               WHERE t.format = %s AND m.steam_id != %s
                GROUP BY t.rgl_team_id, t.name""",
             (fmt, DEMO_STEAM_ID),
         ).fetchall():
             have_proposal = db.execute(
-                """SELECT 1 FROM scrims WHERE proposer_team_id = ? AND opponent_team_id = ?
-                   AND status = 'pending' AND scheduled_at > ?""",
+                """SELECT 1 FROM scrims WHERE proposer_team_id = %s AND opponent_team_id = %s
+                   AND status = 'pending' AND scheduled_at > %s""",
                 (team_id, real["rgl_team_id"], now),
             ).fetchone()
             if not have_proposal:
@@ -276,7 +286,7 @@ def seed(db: sqlite3.Connection) -> None:
                     """INSERT INTO scrims (format, scheduled_at, origin, proposer_team_id,
                                            opponent_team_id, status, created_by, created_at,
                                            updated_at, notes)
-                       VALUES (?, ?, 'proposal', ?, ?, 'pending', ?, ?, ?, ?)""",
+                       VALUES (%s, %s, 'proposal', %s, %s, 'pending', %s, %s, %s, %s)""",
                     (fmt, in_days(3), team_id, real["rgl_team_id"], DEMO_STEAM_ID,
                      now, now, "Demo proposal — accept or decline me."),
                 )
@@ -287,7 +297,7 @@ def seed(db: sqlite3.Connection) -> None:
             # this — not the demo team's listing — is where the tracker appears.
             # Created by that member so they also get the mark-anyone creator path.
             have_own = db.execute(
-                "SELECT 1 FROM scrims WHERE proposer_team_id = ? AND notes = ?",
+                "SELECT 1 FROM scrims WHERE proposer_team_id = %s AND notes = %s",
                 (real["rgl_team_id"], ATTENDANCE_NOTE),
             ).fetchone()
             if not have_own:
@@ -295,7 +305,7 @@ def seed(db: sqlite3.Connection) -> None:
                     """INSERT INTO scrims (format, scheduled_at, origin, proposer_team_id,
                                            opponent_team_id, status, created_by, created_at,
                                            updated_at, notes)
-                       VALUES (?, ?, 'listing', ?, NULL, 'open', ?, ?, ?, ?)""",
+                       VALUES (%s, %s, 'listing', %s, NULL, 'open', %s, %s, %s, %s)""",
                     (fmt, in_days(4), real["rgl_team_id"], real["member_steam_id"],
                      now, now, ATTENDANCE_NOTE),
                 )
@@ -315,19 +325,36 @@ def seed(db: sqlite3.Connection) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--db", default=os.environ.get("DB_PATH", "app.db"))
+    parser.add_argument("--dsn", default=None,
+                        help="store connection string; defaults to $DATABASE_URL")
     parser.add_argument("--clean", action="store_true",
                         help="remove all demo data instead of seeding")
     args = parser.parse_args()
 
-    if not os.path.exists(args.db):
-        raise SystemExit(f"Database not found: {args.db} (run the app once first)")
-    db = sqlite3.connect(args.db)
-    db.row_factory = sqlite3.Row
+    # Through the shared access path (FR-023): build the app, then borrow its connection.
+    # Building it also brings the store to the current schema, so seeding works against a
+    # store that has never been used — which is what makes an empty store a usable
+    # starting point rather than a dead end (FR-006).
+    from app import create_app
+    from app.config import Config
+    from app.db import close_db, get_db
+
+    class SeedConfig(Config):
+        DATABASE_URL = args.dsn or Config.DATABASE_URL
+
     try:
-        clean(db) if args.clean else seed(db)
-    finally:
-        db.close()
+        app = create_app(SeedConfig)
+    except psycopg.OperationalError as exc:
+        raise SystemExit(
+            f"Cannot reach the store: {exc}\n"
+            "Start one, or pass --dsn. See README, 'Running the app'."
+        )
+
+    with app.app_context():
+        try:
+            clean(get_db()) if args.clean else seed(get_db())
+        finally:
+            close_db()
 
 
 if __name__ == "__main__":

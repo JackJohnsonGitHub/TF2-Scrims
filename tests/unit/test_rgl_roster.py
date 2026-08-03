@@ -20,8 +20,9 @@ def _known_teams(app):
         db = get_db()
         for team_id in (101, 9990001):
             db.execute(
-                "INSERT OR IGNORE INTO rgl_teams (rgl_team_id, name, format, updated_at)"
-                " VALUES (?, ?, 'sixes', '2026-07-29T00:00:00+00:00')",
+                "INSERT INTO rgl_teams (rgl_team_id, name, format, updated_at)"
+                " VALUES (%s, %s, 'sixes', '2026-07-29T00:00:00+00:00')"
+                " ON CONFLICT DO NOTHING",
                 (team_id, f"Team {team_id}"),
             )
         db.commit()
@@ -181,7 +182,7 @@ def test_ensure_roster_refetches_when_stale(app, monkeypatch):
     stale = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat(timespec="seconds")
     with app.test_request_context():
         save_roster(101, players(("1", "old", True)))
-        get_db().execute("UPDATE rgl_roster_meta SET fetched_at = ? WHERE rgl_team_id = 101",
+        get_db().execute("UPDATE rgl_roster_meta SET fetched_at = %s WHERE rgl_team_id = 101",
                          (stale,))
         get_db().commit()
         rows, fetched_at = ensure_roster(101)
@@ -198,7 +199,7 @@ def test_ensure_roster_keeps_cache_on_outage(app, monkeypatch):
     stale = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat(timespec="seconds")
     with app.test_request_context():
         save_roster(101, players(("1", "amy", True)))
-        get_db().execute("UPDATE rgl_roster_meta SET fetched_at = ? WHERE rgl_team_id = 101",
+        get_db().execute("UPDATE rgl_roster_meta SET fetched_at = %s WHERE rgl_team_id = 101",
                          (stale,))
         get_db().commit()
         rows, fetched_at = ensure_roster(101)

@@ -40,8 +40,10 @@ def seed_roster(app, team_id, leaders=(), players=()):
         db = get_db()
         for steam_id in list(leaders) + list(players):
             db.execute(
-                "INSERT OR REPLACE INTO rgl_rosters (rgl_team_id, steam_id, name, is_leader)"
-                " VALUES (?, ?, ?, ?)",
+                "INSERT INTO rgl_rosters (rgl_team_id, steam_id, name, is_leader)"
+                " VALUES (%s, %s, %s, %s)"
+                " ON CONFLICT (rgl_team_id, steam_id) DO UPDATE SET"
+                "   name = excluded.name, is_leader = excluded.is_leader",
                 (team_id, steam_id, f"p{steam_id[-3:]}", 1 if steam_id in leaders else 0))
         db.commit()
 
@@ -68,11 +70,12 @@ def match(app, client, login, link_team):
             """INSERT INTO scrims (format, scheduled_at, origin, proposer_team_id,
                                    opponent_team_id, status, created_by,
                                    created_at, updated_at)
-               VALUES ('sixes', ?, 'listing', ?, ?, 'confirmed', ?, ?, ?)""",
+               VALUES ('sixes', %s, 'listing', %s, %s, 'confirmed', %s, %s, %s)
+               RETURNING id""",
             ((now + timedelta(days=1)).isoformat(timespec="seconds"), HOST_TEAM,
              GUEST_TEAM, HOST_LEADER, now.isoformat(timespec="seconds"),
              now.isoformat(timespec="seconds")))
-        scrim_id = cur.lastrowid
+        scrim_id = cur.fetchone()["id"]
         db.commit()
 
         # The GUEST paid, so the server is bound to and owned by their side.

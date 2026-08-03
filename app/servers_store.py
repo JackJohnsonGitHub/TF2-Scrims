@@ -18,7 +18,7 @@ from datetime import datetime, timedelta, timezone
 
 from flask import current_app
 
-from .db import get_db
+from .db import get_db, transaction
 from .rgl_store import utc_now
 
 # Lifecycle states. `pending_payment` means the user asked for a server but payment has
@@ -87,7 +87,7 @@ def _rows_to_dicts(rows) -> list[dict]:
 
 
 def get_server(server_id) -> dict | None:
-    row = get_db().execute("SELECT * FROM servers WHERE id = ?", (server_id,)).fetchone()
+    row = get_db().execute("SELECT * FROM servers WHERE id = %s", (server_id,)).fetchone()
     return dict(row) if row else None
 
 
@@ -96,7 +96,7 @@ def scrim_sides(scrim_id) -> tuple:
     if not scrim_id:
         return ()
     row = get_db().execute(
-        "SELECT proposer_team_id, opponent_team_id FROM scrims WHERE id = ?",
+        "SELECT proposer_team_id, opponent_team_id FROM scrims WHERE id = %s",
         (scrim_id,),
     ).fetchone()
     if row is None:
@@ -124,14 +124,16 @@ def can_access(server: dict, steam_id: str, team_ids) -> bool:
 def accessible_servers(steam_id: str, team_ids) -> list[dict]:
     """Servers this viewer may see and join. An empty list is a valid state."""
     ids = list(team_ids or ())
-    placeholders = ",".join("?" * len(ids)) if ids else "NULL"
+    placeholders = ",".join(["%s"] * len(ids)) if ids else "NULL"
     rows = get_db().execute(
-        f"""SELECT DISTINCT v.* FROM servers v
-            LEFT JOIN scrims s ON s.id = v.scrim_id
-            WHERE v.owner_steam_id = ?
-               OR v.team_id IN ({placeholders})
-               OR s.proposer_team_id IN ({placeholders})
-               OR s.opponent_team_id IN ({placeholders})
+        f"""SELECT * FROM (
+                SELECT DISTINCT v.* FROM servers v
+                LEFT JOIN scrims s ON s.id = v.scrim_id
+                WHERE v.owner_steam_id = %s
+                   OR v.team_id IN ({placeholders})
+                   OR s.proposer_team_id IN ({placeholders})
+                   OR s.opponent_team_id IN ({placeholders})
+            ) v
             ORDER BY COALESCE(v.window_starts_at, v.created_at) ASC""",
         (steam_id, *ids, *ids, *ids),
     ).fetchall()
@@ -148,7 +150,7 @@ def team_leaders(team_id) -> set:
     if not team_id:
         return set()
     rows = get_db().execute(
-        "SELECT steam_id FROM rgl_rosters WHERE rgl_team_id = ? AND is_leader = 1",
+        "SELECT steam_id FROM rgl_rosters WHERE rgl_team_id = %s AND is_leader = 1",
         (team_id,),
     ).fetchall()
     return {r["steam_id"] for r in rows}
@@ -162,7 +164,7 @@ def managing_team_for(server: dict) -> int | None:
     if not scrim_id:
         return server.get("team_id")
     row = get_db().execute(
-        "SELECT proposer_team_id FROM scrims WHERE id = ?", (scrim_id,)).fetchone()
+        "SELECT proposer_team_id FROM scrims WHERE id = %s", (scrim_id,)).fetchone()
     return row["proposer_team_id"] if row else server.get("team_id")
 
 
@@ -208,14 +210,14 @@ def scrims_without_servers(steam_id: str) -> list[dict]:
                   pt.name AS proposer_name, ot.name AS opponent_name
            FROM scrims s
            JOIN rgl_memberships m
-                ON m.steam_id = ?
+                ON m.steam_id = %s
                 AND m.rgl_team_id IN (s.proposer_team_id, s.opponent_team_id)
            LEFT JOIN rgl_teams pt ON pt.rgl_team_id = s.proposer_team_id
            LEFT JOIN rgl_teams ot ON ot.rgl_team_id = s.opponent_team_id
            LEFT JOIN servers v ON v.scrim_id = s.id
            WHERE v.id IS NULL
              AND s.status IN ('confirmed', 'open', 'pending')
-             AND s.scheduled_at > ?
+             AND s.scheduled_at > %s
            ORDER BY s.scheduled_at ASC""",
         (steam_id, utc_now()),
     ).fetchall()
@@ -224,7 +226,7 @@ def scrims_without_servers(steam_id: str) -> list[dict]:
 
 def server_for_scrim(scrim_id) -> dict | None:
     row = get_db().execute(
-        "SELECT * FROM servers WHERE scrim_id = ?", (scrim_id,)).fetchone()
+        "SELECT * FROM servers WHERE scrim_id = %s", (scrim_id,)).fetchone()
     return dict(row) if row else None
 
 
@@ -322,27 +324,35 @@ def create_server(*, owner_steam_id: str, team_id: int | None, name: str,
                   scrim_id=None, join_password: str | None = None,
                   address: str | None = None, players: int | None = None,
                   window_starts_at: str | None = None,
-                  window_ends_at: str | None = None, demo: bool = False):
-    """Insert a server and return its id."""
+                  window_ends_at: str | None = None, demo: bool = False,
+                  commit: bool = True):
+    """Insert a server and return its id.
+
+    `commit=False` when the caller owns the transaction — `attach_to_scrim` must land the
+    server and the credit reservation together or not at all (FR-012).
+    """
     now = utc_now()
     cur = get_db().execute(
         """INSERT INTO servers (scrim_id, owner_steam_id, team_id, state, name, map,
                                 max_slots, join_password, address, players,
                                 window_starts_at, window_ends_at, demo,
                                 created_at, updated_at)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+           RETURNING id""",
         (scrim_id, owner_steam_id, team_id, state, name, map_name, max_slots,
          join_password, address, players, window_starts_at, window_ends_at,
          int(demo), now, now),
     )
-    get_db().commit()
-    return cur.lastrowid
+    server_id = cur.fetchone()["id"]
+    if commit:
+        get_db().commit()
+    return server_id
 
 
 def set_state(server_id, state: str, *, stopped_reason: str | None = None) -> None:
     get_db().execute(
-        """UPDATE servers SET state = ?, stopped_reason = COALESCE(?, stopped_reason),
-                              updated_at = ? WHERE id = ?""",
+        """UPDATE servers SET state = %s, stopped_reason = COALESCE(%s, stopped_reason),
+                              updated_at = %s WHERE id = %s""",
         (state, stopped_reason, utc_now(), server_id),
     )
     get_db().commit()
@@ -353,8 +363,8 @@ def update_settings(server_id, *, name: str, map_name: str, max_slots: int,
     """Apply owner-editable settings. `[sim]` — applied to simulated state this
     increment; feature 006 pushes the same change to a real server."""
     get_db().execute(
-        """UPDATE servers SET name = ?, map = ?, max_slots = ?, join_password = ?,
-                              updated_at = ? WHERE id = ?""",
+        """UPDATE servers SET name = %s, map = %s, max_slots = %s, join_password = %s,
+                              updated_at = %s WHERE id = %s""",
         (name, map_name, max_slots, join_password, utc_now(), server_id),
     )
     get_db().commit()
@@ -371,7 +381,7 @@ def extend_window(server_id, minutes: int) -> str:
     ends = _parse(server.get("window_ends_at")) or _now()
     new_end = (ends + timedelta(minutes=minutes)).isoformat(timespec="seconds")
     get_db().execute(
-        "UPDATE servers SET window_ends_at = ?, updated_at = ? WHERE id = ?",
+        "UPDATE servers SET window_ends_at = %s, updated_at = %s WHERE id = %s",
         (new_end, utc_now(), server_id),
     )
     get_db().commit()
@@ -382,7 +392,7 @@ def mark_grace_used(server_id) -> None:
     """The grace is once per server, not once per window. Granting it per extension
     would quietly make every credit buy 45 minutes instead of 30."""
     get_db().execute(
-        "UPDATE servers SET grace_used = 1, updated_at = ? WHERE id = ?",
+        "UPDATE servers SET grace_used = 1, updated_at = %s WHERE id = %s",
         (utc_now(), server_id),
     )
     get_db().commit()
@@ -416,30 +426,33 @@ def attach_to_scrim(actor_steam_id: str, scrim: dict, team_id: int | None = None
     Raises `credits.InsufficientCredits` if the balance cannot cover it. Callers MUST
     have created the scrim already and MUST NOT undo it on failure: a scheduled scrim
     with no server is a valid, honest state, and scheduling is free (Principle I).
+
+    **The server and its reservation commit together** (FR-012). This used to be two
+    transactions — create and commit the server, reserve the credit, delete the server if
+    the reservation failed — which meant a crash in between left a server that had
+    reserved nothing, and the compensating DELETE ran on a connection whose transaction
+    the failure had already poisoned. One transaction removes both problems: nothing to
+    undo, because nothing was committed (research R19).
     """
     from . import credits
 
     starts, ends = window_for(scrim["scheduled_at"])
     label = scrim.get("proposer_name") or f"Scrim {scrim['id']}"
-    server_id = create_server(
-        owner_steam_id=actor_steam_id,
-        team_id=team_id or owning_team_for(actor_steam_id, scrim),
-        scrim_id=scrim["id"],
-        name=f"{label} — {scrim['scheduled_at'][:10]}",
-        map_name="cp_process_final",
-        max_slots=24,
-        state=SCHEDULED,
-        window_starts_at=starts,
-        window_ends_at=ends,
-    )
-    try:
+    with transaction():
+        server_id = create_server(
+            owner_steam_id=actor_steam_id,
+            team_id=team_id or owning_team_for(actor_steam_id, scrim),
+            scrim_id=scrim["id"],
+            name=f"{label} — {scrim['scheduled_at'][:10]}",
+            map_name="cp_process_final",
+            max_slots=24,
+            state=SCHEDULED,
+            window_starts_at=starts,
+            window_ends_at=ends,
+            commit=False,
+        )
         credits.reserve(actor_steam_id, f"Server for scrim {scrim['id']}",
                         scrim_id=scrim["id"], server_id=server_id)
-    except Exception:
-        # No credit was taken, so leave no half-attached server behind either.
-        get_db().execute("DELETE FROM servers WHERE id = ?", (server_id,))
-        get_db().commit()
-        raise
     return server_id
 
 
@@ -480,7 +493,7 @@ def mark_failed_to_place(server_id) -> None:
 def servers_needing_reconcile() -> list[dict]:
     """Every server whose state could still change on the clock."""
     rows = get_db().execute(
-        "SELECT * FROM servers WHERE state IN (?,?,?,?)",
+        "SELECT * FROM servers WHERE state IN (%s,%s,%s,%s)",
         (SCHEDULED, STARTING, RUNNING, IN_GRACE),
     ).fetchall()
     return _rows_to_dicts(rows)

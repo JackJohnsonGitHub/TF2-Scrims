@@ -2,3 +2,8 @@ Flask==3.0.3
 gunicorn==22.0.0
 requests==2.32.3
 pytest==8.2.2
+# PostgreSQL driver (feature 006). `[binary]` ships libpq as a wheel, so the
+# python:3.12-slim deps stage needs no build toolchain. Exact patch pins: the store
+# is the one dependency where a surprise upgrade is a data-integrity question.
+psycopg[binary]==3.3.4
+psycopg-pool==3.3.1

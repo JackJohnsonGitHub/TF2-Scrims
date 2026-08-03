@@ -21,7 +21,7 @@ is reserved; subtracting again when the window opens would charge twice for one 
 The reserved-versus-consumed distinction lives in the server's state (`scheduled` vs
 `running`), which is what decides whether a release is still possible.
 """
-from .db import get_db
+from .db import get_db, transaction
 from .rgl_store import utc_now
 
 GRANT = "grant"
@@ -53,7 +53,7 @@ class InsufficientCredits(ValueError):
 def available_credits(steam_id: str) -> int:
     """Credits this account can spend right now. Derived, never stored."""
     row = get_db().execute(
-        "SELECT COALESCE(SUM(delta), 0) AS total FROM credit_ledger WHERE steam_id = ?",
+        "SELECT COALESCE(SUM(delta), 0) AS total FROM credit_ledger WHERE steam_id = %s",
         (steam_id,),
     ).fetchone()
     return int(row["total"])
@@ -65,37 +65,60 @@ def _entry(steam_id: str, delta: int, kind: str, cause: str, *,
     cur = db.execute(
         """INSERT INTO credit_ledger (steam_id, delta, kind, cause, payment_id,
                                       scrim_id, server_id, created_at)
-           VALUES (?,?,?,?,?,?,?,?)""",
+           VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+           RETURNING id""",
         (steam_id, delta, kind, cause, payment_id, scrim_id, server_id, utc_now()),
     )
-    return cur.lastrowid
+    return cur.fetchone()["id"]
 
 
 def _spend(steam_id: str, amount: int, kind: str, cause: str, *,
            payment_id=None, scrim_id=None, server_id=None) -> int:
     """Take `amount` credits, refusing if the balance cannot cover it.
 
-    The balance check lives *inside* the INSERT rather than as a separate SELECT. A
-    read-then-write would let two concurrent spends both observe the same balance and
-    both succeed, driving it negative — and the poller writes from a different process
-    than Gunicorn's workers, so that race is real rather than theoretical. One
-    statement cannot interleave with itself.
+    The balance check lives *inside* the INSERT rather than as a separate SELECT, and the
+    account's row is locked first. **Both are required, and the second one is new.**
+
+    The conditional insert alone was correct under SQLite only because SQLite has a single
+    global writer, so one statement genuinely could not interleave with itself. Postgres
+    runs at READ COMMITTED: two concurrent spends of the same account's last credit each
+    evaluate the WHERE against a snapshot taken before either insert, both see a
+    sufficient balance, and both insert. The balance goes to −1 — silently, on the paid
+    compute path, looking from the outside exactly like a page that worked (research R9).
+
+    `SELECT … FOR UPDATE` on the account's own row serializes exactly the transactions
+    that could race on this balance, and nothing else:
+
+    - **Per-account.** Two different users spending at the same moment take different
+      locks and never wait on each other, which is what FR-008 requires.
+    - **The `users` row always exists** — every `credit_ledger.steam_id` is a foreign key
+      to it — so the lock always has a target.
+    - **No network I/O inside the lock.** `spend_extension` is the mid-match path that
+      must complete in seconds; it stays a pure local write.
+    - Released by commit or rollback. No leak path.
+
+    A cached balance column with a CHECK constraint would also prevent the negative, and
+    is forbidden: FR-013 and constitution VIII require the balance be derivable from the
+    ledger, never a stored total that can disagree with the rows explaining it.
     """
-    db = get_db()
-    cur = db.execute(
-        """INSERT INTO credit_ledger (steam_id, delta, kind, cause, payment_id,
-                                      scrim_id, server_id, created_at)
-           SELECT ?, ?, ?, ?, ?, ?, ?, ?
-           WHERE (SELECT COALESCE(SUM(delta), 0) FROM credit_ledger
-                  WHERE steam_id = ?) >= ?""",
-        (steam_id, -amount, kind, cause, payment_id, scrim_id, server_id, utc_now(),
-         steam_id, amount),
-    )
-    if cur.rowcount != 1:
-        db.rollback()
-        raise InsufficientCredits(amount, available_credits(steam_id))
-    db.commit()
-    return cur.lastrowid
+    with transaction() as db:
+        db.execute("SELECT 1 FROM users WHERE steam_id = %s FOR UPDATE", (steam_id,))
+        cur = db.execute(
+            """INSERT INTO credit_ledger (steam_id, delta, kind, cause, payment_id,
+                                          scrim_id, server_id, created_at)
+               SELECT %s, %s, %s, %s, %s, %s, %s, %s
+               WHERE (SELECT COALESCE(SUM(delta), 0) FROM credit_ledger
+                      WHERE steam_id = %s) >= %s
+               RETURNING id""",
+            (steam_id, -amount, kind, cause, payment_id, scrim_id, server_id, utc_now(),
+             steam_id, amount),
+        )
+        if cur.rowcount != 1:
+            # Read the balance before the rollback releases the lock, so the number in
+            # the message is the one the refusal was actually made against.
+            available = available_credits(steam_id)
+            raise InsufficientCredits(amount, available)
+        return cur.fetchone()["id"]
 
 
 def grant(steam_id: str, amount: int, cause: str, *, payment_id=None) -> int:
@@ -137,8 +160,8 @@ def ledger(steam_id: str, limit: int = 200) -> list[dict]:
     """Every movement, newest first, with its cause — so a disputed balance can be
     explained without the operator's help."""
     rows = get_db().execute(
-        """SELECT * FROM credit_ledger WHERE steam_id = ?
-           ORDER BY id DESC LIMIT ?""",
+        """SELECT * FROM credit_ledger WHERE steam_id = %s
+           ORDER BY id DESC LIMIT %s""",
         (steam_id, limit),
     ).fetchall()
     return [{**dict(r), "kind_label": KIND_LABELS.get(r["kind"], r["kind"])}

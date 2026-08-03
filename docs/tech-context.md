@@ -50,8 +50,13 @@
   per-server workloads and their services via the API rather than shelling out to
   `kubectl`.
 - **Metadata store** for users (Steam identities), RGL links and cached RGL data, scrims
-  and attendance, entitlement approvals, and server records: start with SQLite (single
-  node); leave room to move to Postgres.
+  and attendance, entitlement approvals, and server records: **PostgreSQL 17**, reached
+  through psycopg 3, running as a single-instance StatefulSet in the cluster. One engine
+  everywhere — development, automated tests, and deployment — with no dialect abstraction
+  and no second backend, so a query cannot be valid in one environment and invalid in
+  another. It started as SQLite on a single node; feature 006 replaced it, because one
+  file on one disk meant one app copy, every deploy was an outage, and concurrent writers
+  contended.
 - **Web frontend** — server-rendered Jinja templates + a single stylesheet, kept
   minimal (no SPA/JS build toolchain).
 

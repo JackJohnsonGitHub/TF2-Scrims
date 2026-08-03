@@ -23,15 +23,19 @@ COPY --from=deps /install /usr/local
 # Copy only application code (kept separate from the deps layer above).
 COPY app/ ./app/
 COPY wsgi.py ./
+# Schema migrations are read at startup by `migrate()`, so they ship in the image. They
+# are declarative state that reaches an environment through the repo, the same as the
+# manifests in guilding-for-the-folks/managed-services (Principle VI).
+COPY migrations/ ./migrations/
 
-# Run as a non-root user (Principle IV / VII). Create the data dir for the SQLite
-# DB (DB_PATH=/data/app.db) owned by the app user; in the cluster a PVC mounts here,
-# and readOnlyRootFilesystem means /data is the only writable path.
-RUN useradd --system --uid 10001 --no-create-home appuser && \
-    mkdir -p /data && chown appuser:appuser /data
-ENV DB_PATH=/data/app.db
+# Run as a non-root user (Principle IV / VII).
+#
+# No data directory and no VOLUME: as of feature 006 the store is PostgreSQL, reached over
+# the network via DATABASE_URL. With nothing local to write, `readOnlyRootFilesystem: true`
+# needs no writable path carved out for it at all — a strictly smaller surface than the
+# PVC this replaced, and one fewer place for a second, stale copy of the data to live.
+RUN useradd --system --uid 10001 --no-create-home appuser
 USER appuser
-VOLUME ["/data"]
 
 EXPOSE 8000
 # Gunicorn serves the WSGI app; the Flask dev server is never used in the container.

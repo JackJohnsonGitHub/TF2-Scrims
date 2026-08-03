@@ -39,7 +39,14 @@ def start_trade():
     destination — it is never rendered into a page.
     """
     steam_id = current_user()["steam_id"]
-    scrim_id = request.form.get("scrim_id") or None
+    # Coerce at the boundary: `target_scrim_id` is an integer column, and the form gives
+    # a string. SQLite coerced it silently; Postgres refuses (research R8). A junk value
+    # is treated as "no scrim" rather than a 500 — the payment is still valid without one.
+    raw_scrim_id = request.form.get("scrim_id") or None
+    try:
+        scrim_id = int(raw_scrim_id) if raw_scrim_id else None
+    except ValueError:
+        scrim_id = None
     try:
         payments.start_payment(steam_id, target_scrim_id=scrim_id)
     except PaymentError as exc:
